@@ -12,3 +12,4 @@ Dockerfile
 README.md
 .pi-web
 data/
+.store_cookie
