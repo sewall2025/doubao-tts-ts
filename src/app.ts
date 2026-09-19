@@ -3,7 +3,6 @@
  * 一套路由，src/server.ts（Docker）与 api/index.ts（Vercel）共用。
  */
 import { Hono } from "hono";
-import { stream } from "hono/streaming";
 import { API_KEY, MAX_INPUT_CHARS, KEEPALIVE_ENABLED } from "./lib/config.ts";
 import { loadCookie, cookieExpiryDays } from "./lib/cookie.ts";
 import { checkRateLimit, RATE_MAX } from "./lib/ratelimit.ts";
@@ -207,45 +206,52 @@ app.post("/v1/audio/speech", async (c) => {
     `[REQ] voice=${speaker} format=${fmtRaw} speed=${body.speed ?? 1.0}(→${speed}) pitch=${pitch} chars=${input.length}`,
   );
 
-  // 流式返回：边合成边推
-  c.header("Content-Type", MEDIA_TYPES[doubaoFormat]);
-  c.header("X-Doubao-Speaker", speaker);
-  return stream(c, async (s) => {
-    // 首字节发出前失败可安全重试（豆包瞬时并发会拒掉部分 session）。
-    // 一旦已写出音频就无法改状态/重发，只能中断。
-    const MAX_ATTEMPTS = 3;
-    let sent = false;
-    let lastErr: unknown = null;
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS && !sent; attempt++) {
-      try {
-        for await (const chunk of synthesize(input, {
-          speaker,
-          format: doubaoFormat as AudioFormat,
-          speechRate: speed,
-          pitch,
-          cookie,
-        })) {
-          if (chunk.audio) {
-            sent = true;
-            await s.write(chunk.audio);
-          }
-        }
-        lastErr = null;
-        break; // 正常结束
-      } catch (e) {
-        lastErr = e;
-        if (sent) break; // 已发首字节，无法重试
-        if (attempt < MAX_ATTEMPTS) {
-          await new Promise((r) => setTimeout(r, 200 * attempt)); // 退避后重试
-        }
+  // 缓冲返回：收完整段再带 Content-Length 一次性发出。
+  // 音频段都很短，流式无收益；chunked 传输经反向代理易被缓冲/截断。
+  // 未发出任何字节前，失败可重试（豆包瞬时并发会拒掉部分 session）且能返回正确状态码。
+  const MAX_ATTEMPTS = 3;
+  let audio: Buffer | null = null;
+  let lastErr: unknown = null;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const parts: Buffer[] = [];
+      for await (const chunk of synthesize(input, {
+        speaker,
+        format: doubaoFormat as AudioFormat,
+        speechRate: speed,
+        pitch,
+        cookie,
+      })) {
+        if (chunk.audio) parts.push(chunk.audio);
+      }
+      audio = Buffer.concat(parts);
+      lastErr = null;
+      break; // 正常结束
+    } catch (e) {
+      lastErr = e;
+      if (attempt < MAX_ATTEMPTS) {
+        await new Promise((r) => setTimeout(r, 200 * attempt)); // 退避后重试
       }
     }
-    if (lastErr) {
-      const err = lastErr as Error & { code?: string };
+  }
+
+  if (lastErr || !audio || audio.length === 0) {
+    const err = lastErr as (Error & { code?: string }) | null;
+    if (err) {
       console.error(
-        `[synthesize error] attempts=${MAX_ATTEMPTS} sent=${sent} ` +
+        `[synthesize error] attempts=${MAX_ATTEMPTS} ` +
           `name=${err?.name ?? "?"} code=${err?.code ?? ""} msg=${err?.message || String(lastErr) || "(empty)"}`,
       );
     }
-  });
+    return c.json(
+      { error: { message: `Doubao synthesis failed: ${err?.message || "no audio"}`, type: "upstream_error" } },
+      502,
+    );
+  }
+
+  c.header("Content-Type", MEDIA_TYPES[doubaoFormat]);
+  c.header("X-Doubao-Speaker", speaker);
+  c.header("Content-Length", String(audio.length));
+  // Buffer 是共享内存池视图，按 offset/length 切出精确 ArrayBuffer
+  return c.body(audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.byteLength) as ArrayBuffer);
 });
