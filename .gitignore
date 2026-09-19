@@ -1,0 +1,26 @@
+# 依赖
+node_modules/
+
+# 敏感文件：绝不提交
+.env
+.env.*
+!.env.example
+.store_*
+.cookie
+.doubao_cookie
+
+# Vercel
+.vercel/
+
+# 生成的音频 / 日志
+*.mp3
+*.wav
+*.ogg
+*.opus
+*.pcm
+*.log
+
+# 系统
+.DS_Store
+
+.pi-web
