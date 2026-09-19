@@ -152,7 +152,17 @@ export async function* synthesize(
     resolveMsg?.();
     resolveMsg = null;
   });
-  ws.on("close", () => {
+  // 握手被拒（豆包并发/限流会返回非 101 响应），ws 不会当 error 抛，手动捕获状态码
+  ws.on("unexpected-response", (_req, res) => {
+    error = new Error(`WS 握手被拒: HTTP ${res.statusCode} ${res.statusMessage ?? ""}`.trim());
+    resolveMsg?.();
+    resolveMsg = null;
+  });
+  ws.on("close", (code: number, reason: Buffer) => {
+    // 非正常关闭且未收到终态事件时，把关闭码当错误暴露
+    if (!error && code !== 1000 && code !== 1005) {
+      error = new Error(`WS 异常关闭: code=${code} reason=${reason?.toString() || ""}`.trim());
+    }
     closed = true;
     resolveMsg?.();
     resolveMsg = null;
@@ -162,6 +172,9 @@ export async function* synthesize(
     new Promise<void>((resolve, reject) => {
       ws.once("open", () => resolve());
       ws.once("error", (e: Error) => reject(e));
+      ws.once("unexpected-response", (_req, res) =>
+        reject(new Error(`WS 握手被拒: HTTP ${res.statusCode} ${res.statusMessage ?? ""}`.trim())),
+      );
     });
 
   async function recv(timeoutMs: number): Promise<Buffer | null> {

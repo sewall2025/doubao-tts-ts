@@ -211,19 +211,41 @@ app.post("/v1/audio/speech", async (c) => {
   c.header("Content-Type", MEDIA_TYPES[doubaoFormat]);
   c.header("X-Doubao-Speaker", speaker);
   return stream(c, async (s) => {
-    try {
-      for await (const chunk of synthesize(input, {
-        speaker,
-        format: doubaoFormat as AudioFormat,
-        speechRate: speed,
-        pitch,
-        cookie,
-      })) {
-        if (chunk.audio) await s.write(chunk.audio);
+    // 首字节发出前失败可安全重试（豆包瞬时并发会拒掉部分 session）。
+    // 一旦已写出音频就无法改状态/重发，只能中断。
+    const MAX_ATTEMPTS = 3;
+    let sent = false;
+    let lastErr: unknown = null;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS && !sent; attempt++) {
+      try {
+        for await (const chunk of synthesize(input, {
+          speaker,
+          format: doubaoFormat as AudioFormat,
+          speechRate: speed,
+          pitch,
+          cookie,
+        })) {
+          if (chunk.audio) {
+            sent = true;
+            await s.write(chunk.audio);
+          }
+        }
+        lastErr = null;
+        break; // 正常结束
+      } catch (e) {
+        lastErr = e;
+        if (sent) break; // 已发首字节，无法重试
+        if (attempt < MAX_ATTEMPTS) {
+          await new Promise((r) => setTimeout(r, 200 * attempt)); // 退避后重试
+        }
       }
-    } catch (e) {
-      // 首字节已发出，无法改状态码，只能中断
-      console.error("[synthesize error]", (e as Error).message);
+    }
+    if (lastErr) {
+      const err = lastErr as Error & { code?: string };
+      console.error(
+        `[synthesize error] attempts=${MAX_ATTEMPTS} sent=${sent} ` +
+          `name=${err?.name ?? "?"} code=${err?.code ?? ""} msg=${err?.message || String(lastErr) || "(empty)"}`,
+      );
     }
   });
 });
