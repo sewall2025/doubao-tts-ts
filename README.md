@@ -16,20 +16,23 @@
 
 ```bash
 npm install
-cp .env.example .env      # 填 DOUBAO_TTS_API_KEY 和 DOUBAO_TTS_COOKIE
+cp .env.example .env      # 填 DOUBAO_TTS_API_KEY
+mkdir -p data
+# 把浏览器登录豆包后 DevTools → Network → 任意请求复制的完整 Cookie 头写进去：
+echo "完整 Cookie 头" > data/.store_cookie
 npm run dev               # 或 npm start
 ```
 
-`DOUBAO_TTS_COOKIE` 从浏览器登录豆包后，DevTools → Network → 任意请求
-复制完整 Cookie 头。打开 `http://localhost:8000/ui` 预览音色。
+cookie 不走环境变量，直接写进 `data/.store_cookie`（目录由 `DOUBAO_TTS_DATA_DIR` 控制）。
+保温续期会自动回写这个文件。打开 `http://localhost:8000/ui` 预览音色。
 
 ### Docker
 
 ```bash
 docker build -t doubao-tts-ts .
+mkdir -p data && echo "浏览器复制的 Cookie 头" > data/.store_cookie
 docker run -d -p 8000:8000 \
   -e DOUBAO_TTS_API_KEY=sk-xxx \
-  -e DOUBAO_TTS_COOKIE="浏览器复制的 Cookie 头" \
   -v $(pwd)/data:/data \
   doubao-tts-ts
 ```
@@ -46,8 +49,9 @@ vercel
 - `DOUBAO_TTS_API_KEY` — 鉴权密钥
 - `STORAGE_BACKEND=redis`
 - `KV_REST_API_URL` / `KV_REST_API_TOKEN` — Vercel KV（或 Upstash）
-- `DOUBAO_TTS_COOKIE` — 首次播种 cookie（之后存 KV）
 - `CRON_SECRET`（可选）— 保护定时续期端点
+
+cookie 不再走环境变量：部署后往 KV 写入 `cookie` 键（Upstash/Vercel KV 控制台或 CLI），值为浏览器复制的完整 Cookie 头。
 
 `vercel.json` 已配好：所有请求路由到 Hono app，Cron 每天 04:00 续期 cookie。
 
@@ -62,7 +66,6 @@ vercel
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
 | `DOUBAO_TTS_API_KEY` | 无 | Bearer 鉴权；未设则仅回环可达 |
-| `DOUBAO_TTS_COOKIE` | 无 | 首次播种的 Cookie 头 |
 | `STORAGE_BACKEND` | `file` | `file`（Docker）/ `redis`（Vercel） |
 | `DOUBAO_TTS_RATE_MAX` | `8` | 限流窗口内最大请求数 |
 | `DOUBAO_TTS_MAX_INPUT` | `4096` | 单次文本长度上限 |

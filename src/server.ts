@@ -28,7 +28,7 @@ if (!API_KEY && !["127.0.0.1", "localhost", "::1"].includes(HOST)) {
 async function startupCheck(): Promise<void> {
   const cookie = await loadCookie();
   if (!cookie) {
-    console.error("⚠️  未找到 cookie（设 DOUBAO_TTS_COOKIE 或挂载 .store_cookie），请求将失败");
+    console.error("⚠️  未找到 cookie（把 Cookie 头写进 <DATA_DIR>/.store_cookie），请求将失败");
   } else {
     const days = await cookieExpiryDays(cookie);
     if (days !== null) {

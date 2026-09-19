@@ -20,16 +20,13 @@ const CORE_COOKIES = new Set([
   "session_tlb_tag", "passport_auth_status_ss",
 ]);
 
-/** 环境变量兜底：首次启动时 storage 为空，用 DOUBAO_TTS_COOKIE 播种 */
+/**
+ * 加载 cookie。只从存储读（不走环境变量）：
+ *   - file 后端（Docker）：直接把 Cookie 头写进 data/.store_cookie
+ *   - redis 后端（Vercel）：往 KV 写 cookie 键（控制台/CLI）
+ */
 async function loadCookie(): Promise<string> {
-  const stored = await getStorage().get(COOKIE_KEY);
-  if (stored) return stored;
-  const seed = (process.env.DOUBAO_TTS_COOKIE ?? "").trim();
-  if (seed) {
-    await getStorage().set(COOKIE_KEY, seed);
-    return seed;
-  }
-  return "";
+  return (await getStorage().get(COOKIE_KEY)) ?? "";
 }
 
 export { loadCookie };
