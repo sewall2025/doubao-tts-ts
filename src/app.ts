@@ -204,15 +204,8 @@ app.post("/v1/audio/speech", async (c) => {
 
   const speed = clampSpeed(body.speed ?? 1.0);
   const pitch = clampPitch(body.pitch ?? 0);
-  const reqRange = c.req.header("Range") ?? "";
-  const reqUA = c.req.header("User-Agent") ?? "";
-  const reqConn = c.req.header("Connection") ?? "";
-  const reqAccept = c.req.header("Accept") ?? "";
-  const reqAcceptEnc = c.req.header("Accept-Encoding") ?? "";
   console.log(
-    `[REQ] voice=${speaker} format=${fmtRaw} speed=${body.speed ?? 1.0}(→${speed}) pitch=${pitch} chars=${input.length}\n` +
-      `      Range="${reqRange}" Connection="${reqConn}" Accept="${reqAccept}" Accept-Encoding="${reqAcceptEnc}"\n` +
-      `      User-Agent="${reqUA}"`,
+    `[REQ] voice=${speaker} format=${fmtRaw} speed=${body.speed ?? 1.0}(→${speed}) pitch=${pitch} chars=${input.length}`,
   );
 
   // 合成策略（多方向实测得出）：
@@ -280,7 +273,7 @@ app.post("/v1/audio/speech", async (c) => {
   // 标点/零内容段：返回静音，客户端顺畅播过（不卡、不触发重试）
   if (punctuation) {
     audio = silentAudio(doubaoFormat as AudioFormat);
-    console.log(`[RESP] status=200 silence bytes=${audio.length} (标点/零内容段)`);
+    console.log(`[RESP] status=200 bytes=${audio.length} (silence)`);
     c.header("Content-Type", MEDIA_TYPES[doubaoFormat]);
     c.header("X-Doubao-Speaker", speaker);
     return c.body(audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.byteLength) as ArrayBuffer);
@@ -302,7 +295,7 @@ app.post("/v1/audio/speech", async (c) => {
 
   c.header("Content-Type", MEDIA_TYPES[doubaoFormat]);
   c.header("X-Doubao-Speaker", speaker);
-  console.log(`[RESP] status=200 bytes=${audio.length} ctype=${MEDIA_TYPES[doubaoFormat]} range="${reqRange}"`);
+  console.log(`[RESP] status=200 bytes=${audio.length}`);
   // Content-Length 交给 node-server 自动设（对齐 read-aloud，不手动干预）。
   // Buffer 是共享内存池视图，按 offset/length 切出精确 ArrayBuffer。
   return c.body(audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.byteLength) as ArrayBuffer);
