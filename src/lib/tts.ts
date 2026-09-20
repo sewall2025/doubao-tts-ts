@@ -40,17 +40,25 @@ function stableId(seed: string): string {
   return String(7_600_000_000_000_000_000n + BigInt("0x" + h) % 99_999_999_999_999_999n);
 }
 
-// 默认每个连接用独立 device_id/web_id，避开豆包可能的每设备并发限制
-// （并发下同一 device_id 会被拒 session → 卡顿/静音）。
-// 置 DOUBAO_TTS_UNIQUE_DEVICE=0 可回退到稳定 device_id（若担心风控）。
-const UNIQUE_DEVICE = !
-  ["0", "false", "no", "off"].includes(
-    (process.env.DOUBAO_TTS_UNIQUE_DEVICE ?? "1").trim().toLowerCase(),
-  );
+// 固定设备池轮询：预生成 N 个稳定 device_id（N = 并发数），请求轮流取用。
+// • 避开每设备并发限制：同时并发请求分散到不同 device_id。
+// • 风控友好：设备数固定且每次重启都是同一批（从 cookie 派生），豆包看到“一人 N 台稳定设备”。
+// 置 DOUBAO_TTS_UNIQUE_DEVICE=0 回退到单设备（池大小=1）。
+function envInt(name: string, def: number): number {
+  const n = parseInt((process.env[name] ?? "").trim(), 10);
+  return Number.isFinite(n) && n > 0 ? n : def;
+}
+const SINGLE_DEVICE = ["0", "false", "no", "off"].includes(
+  (process.env.DOUBAO_TTS_UNIQUE_DEVICE ?? "1").trim().toLowerCase(),
+);
+// 池大小：单设备模式=1；否则=并发数（与 DOUBAO_TTS_CONCURRENCY 一致，默认 8）
+const DEVICE_POOL_SIZE = SINGLE_DEVICE ? 1 : envInt("DOUBAO_TTS_CONCURRENCY", 8);
+let _rrCounter = 0; // 轮询游标
 
 function buildWsUrl(cookie: string): string {
-  // 独立模式：每次调用不同种子 → 不同 device_id/web_id；稳定模式：继续用 cookie 派生
-  const seed = UNIQUE_DEVICE ? `${cookie}:${randomUUID()}` : cookie;
+  // 轮询取第 idx 个设备（固定从 cookie:idx 派生，重启后仍是同一批）
+  const idx = DEVICE_POOL_SIZE === 1 ? 0 : _rrCounter++ % DEVICE_POOL_SIZE;
+  const seed = `${cookie}:dev${idx}`;
   const deviceId = stableId(seed);
   const webId = stableId(seed + "_web");
   const params: Record<string, string> = {
