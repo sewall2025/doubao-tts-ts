@@ -152,11 +152,13 @@ export async function* synthesize(
   text: string,
   cfg: TTSConfig,
 ): AsyncGenerator<TTSChunk, void, unknown> {
-  // handshakeTimeout: 握手超 8s 直接失败，不空等 OS 默认 TCP 超时（可达分钟级），
-  // 避免卡住的请求长时间占用连接槽堆阻后续响应。
+  // family: 4 强制 IPv4——避开 Node happy-eyeballs 双栈连接：容器/服务器 IPv6 到豆包
+  // 不通时会先试 IPv6 卡到超时再回退 IPv4，每次白耗几秒（ETIMEDOUT/AggregateError）→周期性卡顿。
+  // handshakeTimeout: 握手超 6s 直接失败，不空等 OS 默认 TCP 超时。
   const ws = new WebSocket(buildWsUrl(cfg.cookie), {
     headers: HEADERS(cfg.cookie),
-    handshakeTimeout: 8000,
+    handshakeTimeout: 6000,
+    family: 4,
   });
 
   // 收到的消息队列 + 等待器（把事件驱动转成 async 拉取）
