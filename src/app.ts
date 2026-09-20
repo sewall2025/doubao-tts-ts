@@ -7,6 +7,7 @@ import { API_KEY, MAX_INPUT_CHARS, KEEPALIVE_ENABLED } from "./lib/config.ts";
 import { loadCookie, cookieExpiryDays } from "./lib/cookie.ts";
 import { checkRateLimit, RATE_MAX } from "./lib/ratelimit.ts";
 import { synthesize, type AudioFormat } from "./lib/tts.ts";
+import { acquire } from "./lib/semaphore.ts";
 import { UI_HTML } from "./lib/ui.ts";
 import {
   SPEAKERS,
@@ -257,7 +258,7 @@ app.post("/v1/audio/speech", async (c) => {
     const err = lastErr as (Error & { code?: string }) | null;
     if (err) {
       console.error(
-        `[synthesize error] attempts=${MAX_ATTEMPTS} ` +
+        `[synthesize error] ` +
           `name=${err?.name ?? "?"} code=${err?.code ?? ""} msg=${err?.message || String(lastErr) || "(empty)"}`,
       );
     }
