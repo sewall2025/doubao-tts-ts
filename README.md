@@ -3,6 +3,8 @@
 逆向豆包网页端 VoiceGenie 语音合成的 Node/TS 客户端 + OpenAI 兼容服务。
 **一套代码，两处部署**：Docker/VPS（长驻进程）或 Vercel（serverless）。
 
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fsewall2025%2Fdoubao-tts-ts&env=DOUBAO_TTS_API_KEY,STORAGE_BACKEND,KV_REST_API_URL,KV_REST_API_TOKEN,CRON_SECRET&envDescription=STORAGE_BACKEND%20填%20redis%EF%BC%9BKV_REST_API_*%20来自%20Vercel%20KV%2FUpstash%EF%BC%9B部署后往%20KV%20写%20cookie%20键&envLink=https%3A%2F%2Fgithub.com%2Fsewall2025%2Fdoubao-tts-ts%23部署到-vercel)
+
 ## 特性
 
 - OpenAI 兼容 `POST /v1/audio/speech`（流式返回，mp3/opus/wav/pcm）
@@ -40,6 +42,12 @@ docker run -d -p 8000:8000 \
 cookie 落盘到挂载的 `/data`，保温续期会回写，重启不丢。
 
 ## 部署到 Vercel
+
+点一下按钮一键克隆部署（会引导你填环境变量）：
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fsewall2025%2Fdoubao-tts-ts&env=DOUBAO_TTS_API_KEY,STORAGE_BACKEND,KV_REST_API_URL,KV_REST_API_TOKEN,CRON_SECRET&envDescription=STORAGE_BACKEND%20填%20redis%EF%BC%9BKV_REST_API_*%20来自%20Vercel%20KV%2FUpstash%EF%BC%9B部署后往%20KV%20写%20cookie%20键)
+
+或命令行：
 
 ```bash
 vercel
