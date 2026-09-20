@@ -63,7 +63,7 @@ Vercel 面板 → 项目 → **Storage** 选项卡 → **Create Database** → �
 **3. 设鉴权密钥**
 
 面板 → **Settings → Environment Variables** 加 `DOUBAO_TTS_API_KEY`（一串自定义密码，客户端用它鉴权）。
-可选：`CRON_SECRET`（保护定时续期端点）。改了环境变量后重新 Deploy 一次生效。
+改了环境变量后重新 Deploy 一次生效。（`CRON_SECRET` 见下面步骤 5）
 
 **4. 写入 cookie（关键，一锁一次）**
 
@@ -76,7 +76,31 @@ SET cookie "浏览器 DevTools 复制的完整 Cookie 头"
 
 完成后访问 `https://你的域名/health`，能看到 cookie 剩余天数就通了。
 
-> 音色表 `voices.json` 构建时打包进函数（只读），无需配置；与 Docker 共用同一份。
+**5. 确认 cookie 保温（Cron 定时续期）**
+
+cookie 约 30 天过期。Docker 用常驻定时器，Vercel 没有常驻进程，改用 **Cron Job** 定时打续期端点。
+
+仓库的 [`vercel.json`](vercel.json) 已经声明好了，**部署后自动生效，你不用在面板里手建**：
+
+```json
+"crons": [{ "path": "/api/cron/renew", "schedule": "0 4 * * *" }]
+```
+
+每天 UTC 4:00（北京时间 12:00）打一次；剩余天数低于 `DOUBAO_TTS_KEEPALIVE_THRESHOLD_D`（默认 25）才真去续，否则空跑。
+
+**验证已生效**：面板 → 项目 → **Settings → Cron Jobs**，应能看到 `/api/cron/renew` 和下次执行时间。
+也可手动试一下（未设 `CRON_SECRET` 时直接访问）：
+
+```bash
+curl https://你的域名/api/cron/renew
+# {"renewed":false,"reason":"剩余 28.8 天，无需续期"}  ← 这样就是通的
+```
+
+**建议设 `CRON_SECRET`**：不设的话这个端点是公开的，任何人能触发续期。在 **Settings → Environment Variables** 加一个随机字符串即可——Vercel Cron 会自动带 `Authorization: Bearer <CRON_SECRET>` 请求，**无需额外配置**；设了之后上面那条 curl 会返 401（正常）。
+
+> ⚠️ Vercel **Hobby 套餐的 Cron 每天只能跑 1 次且执行时间不保证精准**（可能漂几小时），对保温这种“剩 25 天才续”的场景完全够用。
+> 若 cookie 已经过期，Cron 救不回来，需重新执行步骤 4 写入新 cookie。
+
 > 音色表 `voices.json` 与源码一同被 Vercel 编译打包（只读），无需配置；与 Docker 共用同一份。
 > Vercel 原生支持 Hono：自动编译 `src/`（import 用 `.js` 扩展名指向 `.ts`，符合 TS ESM 约定），
 > `src/app.ts` 用 `handle(app)`（hono/vercel）导出 Function 入口，无需额外构建步骤。
