@@ -7,6 +7,7 @@
  */
 import { readFile, writeFile, rename, unlink } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 
 export interface Storage {
   /** 读取键值（字符串）；不存在返回 null */
@@ -47,13 +48,22 @@ class FileStorage implements Storage {
 
   async set(key: string, value: string): Promise<void> {
     const p = this.pathOf(key);
-    const tmp = `${p}.tmp`;
+    // tmp 名必须唯一：固定用 `${p}.tmp` 时两个并发写者会共用同一个临时文件，
+    // 先完成的 rename 把它消费掉，后者的 rename 撞 ENOENT → 落进下面的非原子直写兜底
+    // （实测：两个 4420 字节并发 set，必然有一个走到直写）。cookie 是这条路径上唯一的写入者，
+    // 一旦写坏就是整篇静音，所以宁可多给一个随机后缀。
+    const tmp = `${p}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
     await writeFile(tmp, value, "utf-8");
     try {
+      // rename 同目录内是原子的：读者只会看到旧内容或新内容，不会看到半截。
       await rename(tmp, p);
     } catch {
-      // 单文件 bind mount 的 rename 可能失败，退回直写
+      // 单文件 bind mount 的 rename 可能失败（目标是挂载点而非普通文件），退回直写。
+      // 这条路径非原子，但此时已无更好选择；tmp 唯一化后它只在真正的 bind mount 场景触发，
+      // 不再被并发误触。
       await writeFile(p, value, "utf-8");
+    } finally {
+      // 无论成功失败都清掉残留 tmp（rename 成功后 tmp 已不存在，unlink 失败无害）。
       await unlink(tmp).catch(() => {});
     }
   }
