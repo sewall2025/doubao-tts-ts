@@ -8,6 +8,7 @@ import { loadCookie, cookieExpiryDays } from "./lib/cookie.ts";
 import { checkRateLimit, RATE_MAX } from "./lib/ratelimit.ts";
 import { synthesize, type AudioFormat } from "./lib/tts.ts";
 import { acquire } from "./lib/semaphore.ts";
+import { silentAudio } from "./lib/silence.ts";
 import { UI_HTML } from "./lib/ui.ts";
 import {
   SPEAKERS,
@@ -214,44 +215,75 @@ app.post("/v1/audio/speech", async (c) => {
       `      User-Agent="${reqUA}"`,
   );
 
-  // 缓冲返回（对齐参考项目 read-aloud）：收齐完整音频再一次性发出。
-  // 客户端要么拿到带 Content-Length 的完整文件，要么拿到干净错误；
-  // 绝不会是“半截挂着”的流（差网络下流式易截断→播放器冻死）。
-  // synthesize 已在截断/超时时抛错，配合重试只返回完整结果。
-  const MAX_ATTEMPTS = 3;
+  // 合成策略（多方向实测得出）：
+  // • 缓冲原子返回（对齐 read-aloud）：收齐完整音频再发，绝不发“半截流”。
+  // • 并发信号量（对齐 Python）：限同时连豆包数，消除 ETIMEDOUT 连接风暴。
+  //   （豆包协议一条连接只能合成一次，无法像微软那样多路复用，实测证实。）
+  // • 静音兑底：纯标点/零内容段豆包返回 bytes=0 或 TTSInvalidText，
+  //   这类本就该是静音（Edge TTS 也返回静音）。返回静音 200，客户端无声播过、不卡不重试。
+  // • 失败策略（对齐 Python 快速失败）：确定性错误不重试，仅瞬时错误快速重试 1 次。
   const HARD_TIMEOUT_MS = 25000; // 整段合成硬超时，卡住快速失败不无限等
+  const release = await acquire(); // 占一个并发槽（满则排队）
   let audio: Buffer | null = null;
   let lastErr: unknown = null;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    try {
-      audio = await Promise.race([
-        (async () => {
-          const parts: Buffer[] = [];
-          for await (const chunk of synthesize(input, {
-            speaker,
-            format: doubaoFormat as AudioFormat,
-            speechRate: speed,
-            pitch,
-            cookie,
-          })) {
-            if (chunk.audio && chunk.audio.length > 0) parts.push(chunk.audio);
-          }
-          if (parts.length === 0) throw new Error("no audio");
-          return Buffer.concat(parts);
-        })(),
-        new Promise<never>((_, rej) =>
-          setTimeout(() => rej(new Error(`合成硬超时 ${HARD_TIMEOUT_MS}ms`)), HARD_TIMEOUT_MS),
-        ),
-      ]);
-      lastErr = null;
-      break; // 完整结束
-    } catch (e) {
-      lastErr = e;
-      audio = null;
-      if (attempt < MAX_ATTEMPTS) {
-        await new Promise((r) => setTimeout(r, 200 * attempt)); // 退避后重试
+  let punctuation = false; // 零内容/无效文本→走静音兑底
+  try {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const parts: Buffer[] = await Promise.race([
+          (async () => {
+            const acc: Buffer[] = [];
+            for await (const chunk of synthesize(input, {
+              speaker,
+              format: doubaoFormat as AudioFormat,
+              speechRate: speed,
+              pitch,
+              cookie,
+            })) {
+              if (chunk.audio && chunk.audio.length > 0) acc.push(chunk.audio);
+            }
+            return acc;
+          })(),
+          new Promise<never>((_, rej) =>
+            setTimeout(() => rej(new Error(`合成硬超时 ${HARD_TIMEOUT_MS}ms`)), HARD_TIMEOUT_MS),
+          ),
+        ]);
+        if (parts.length === 0) {
+          // 豆包合法会话但零音频（纯标点）→ 静音兑底
+          punctuation = true;
+          audio = null;
+        } else {
+          audio = Buffer.concat(parts);
+        }
+        lastErr = null;
+        break; // 正常结束
+      } catch (e) {
+        lastErr = e;
+        audio = null;
+        const m = (e as Error)?.message || "";
+        // TTSInvalidText / 确定性会话失败（标点类）→ 静音兑底，不重试
+        if (m.includes("TTSInvalidText")) {
+          punctuation = true;
+          lastErr = null;
+          break;
+        }
+        // 其他确定性错误（SessionFailed/TaskFailed）重试无意义，立即失败
+        if (m.includes("SessionFailed") || m.includes("TaskFailed")) break;
+        // 瞬时错误（超时/截断/ETIMEDOUT）：快速重试 1 次
+        if (attempt < 2) await new Promise((r) => setTimeout(r, 200));
       }
     }
+  } finally {
+    release();
+  }
+
+  // 标点/零内容段：返回静音，客户端顺畅播过（不卡、不触发重试）
+  if (punctuation) {
+    audio = silentAudio(doubaoFormat as AudioFormat);
+    console.log(`[RESP] status=200 silence bytes=${audio.length} (标点/零内容段)`);
+    c.header("Content-Type", MEDIA_TYPES[doubaoFormat]);
+    c.header("X-Doubao-Speaker", speaker);
+    return c.body(audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.byteLength) as ArrayBuffer);
   }
 
   if (lastErr || !audio || audio.length === 0) {
