@@ -3,13 +3,13 @@
  * 一套路由，src/server.ts（Docker）与 api/index.ts（Vercel）共用。
  */
 import { Hono } from "hono";
-import { API_KEY, MAX_INPUT_CHARS, KEEPALIVE_ENABLED } from "./lib/config.ts";
-import { loadCookie, cookieExpiryDays } from "./lib/cookie.ts";
-import { checkRateLimit, RATE_MAX } from "./lib/ratelimit.ts";
-import { synthesize, type AudioFormat } from "./lib/tts.ts";
-import { acquire } from "./lib/semaphore.ts";
-import { silentAudio } from "./lib/silence.ts";
-import { UI_HTML } from "./lib/ui.ts";
+import { API_KEY, MAX_INPUT_CHARS, KEEPALIVE_ENABLED } from "./lib/config";
+import { loadCookie, cookieExpiryDays } from "./lib/cookie";
+import { checkRateLimit, RATE_MAX } from "./lib/ratelimit";
+import { synthesize, type AudioFormat } from "./lib/tts";
+import { acquire } from "./lib/semaphore";
+import { silentAudio } from "./lib/silence";
+import { UI_HTML } from "./lib/ui";
 import {
   SPEAKERS,
   OPENAI_VOICES,
@@ -20,7 +20,7 @@ import {
   voiceCatalog,
   clampSpeed,
   clampPitch,
-} from "./lib/voices.ts";
+} from "./lib/voices";
 
 export const app = new Hono();
 

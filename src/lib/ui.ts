@@ -3,7 +3,7 @@
  * 与 Python 版一致：女声/男声分组、每音色播放按钮试听、API Key 存内存、
  * 宽屏居中限宽、每音色显示简称/speaker_id 可点击复制。
  */
-import { DEMO_TEXT } from "./config.ts";
+import { DEMO_TEXT } from "./config";
 
 export const UI_HTML = `<!DOCTYPE html>
 <html lang="zh-CN">

@@ -26,4 +26,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=60s --timeout=10s --start-period=15s --retries=3 \
     CMD node -e "fetch('http://127.0.0.1:'+(process.env.DOUBAO_TTS_PORT||8000)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-CMD ["node", "--experimental-strip-types", "src/server.ts"]
+CMD ["node", "--import", "tsx", "src/server.ts"]
