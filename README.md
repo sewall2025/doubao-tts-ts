@@ -18,7 +18,7 @@
 
 ```bash
 npm install
-cp .env.example .env      # 填 DOUBAO_TTS_API_KEY
+cp .env.docker.example .env      # 填 DOUBAO_TTS_API_KEY
 mkdir -p data
 # 把浏览器登录豆包后 DevTools → Network → 任意请求复制的完整 Cookie 头写进去：
 echo "完整 Cookie 头" > data/.store_cookie
@@ -51,8 +51,8 @@ cookie 落盘到挂载的 `/data`，保温续期会回写，重启不丢。
 然后打开 [vercel.com/new](https://vercel.com/new) → **Import Git Repository** → 选你刚 Fork 的 `doubao-tts-ts` → Import。
 构建配置保持默认即可（`vercel.json` 和 `vercel-build` 已在仓库里）。
 
-> 导入时 Vercel 会从 `.env.example` 自动列出一堆环境变量字段——**那些大多是 Docker 专用的，在 Vercel 上可以全留空**。
-> 真正需要的只有下面两步（KV 连接 + 鉴权密钥）。先直接 Deploy，后面再补。
+> 导入时 Vercel 只会从 `.env.example` 列出 `DOUBAO_TTS_API_KEY` 一个字段（Docker 专用变量已拆到 `.env.docker.example`）。
+> 填上鉴权密钥先 Deploy，KV 连接和 cookie 写入见下面步骤。
 
 **2. 连上 KV（Redis）——存 cookie 与限流计数**
 
@@ -86,7 +86,7 @@ SET cookie "浏览器 DevTools 复制的完整 Cookie 头"
 
 ## 环境变量
 
-见 [`.env.example`](.env.example)。关键项：
+配置示例：Vercel 用 [`.env.example`](.env.example)，Docker/VPS 用 [`.env.docker.example`](.env.docker.example)。完整关键项：
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |

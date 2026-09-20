@@ -1,7 +1,7 @@
 # 豆包 TTS OpenAI 兼容服务（TypeScript 版）
 #
 # 首次使用:
-#   1. cp .env.example .env          # 至少改掉 DOUBAO_TTS_API_KEY
+#   1. cp .env.docker.example .env    # 至少改掉 DOUBAO_TTS_API_KEY
 #   2. 准备 cookie（写进 data 目录，续期会原地回写）:
 #        mkdir -p data
 #        printf '%s' "浏览器复制的完整 Cookie 头" > data/.store_cookie
