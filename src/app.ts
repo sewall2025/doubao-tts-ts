@@ -272,21 +272,16 @@ app.post("/v1/audio/speech", async (c) => {
         lastErr = e;
         audio = null;
         const m = (e as Error)?.message || "";
-        // 无可诵内容的 TTSInvalidText（纯标点）→ 静音兑底，不重试
-        if (m.includes("TTSInvalidText") && !hasSpeakable) {
+        // 只有「无可诵内容」（纯标点）的会话失败才走静音且不重试。
+        // 其余一切失败（含文字内容）——包括 SessionFailed/TaskFailed——都当瞬时错误重试：
+        // 实测＋用户反馈证实，豆包在并发下会拒掉部分 session（SessionFailed），但手动重试即成，
+        // 说明它们是瞬时的，不能当确定性错误立即失败。
+        if (!hasSpeakable) {
           punctuation = true;
           lastErr = null;
           break;
         }
-        // 其他确定性错误（SessionFailed/TaskFailed，非标点）重试无意义，立即失败
-        // （注：含可诵内容的 TTSInvalidText 不在此拦截，归入下方瞬时重试）
-        if (
-          !m.includes("TTSInvalidText") &&
-          (m.includes("SessionFailed") || m.includes("TaskFailed"))
-        ) {
-          break;
-        }
-        // 瞬时错误（超时/截断/ETIMEDOUT/含内容的 InvalidText）：退避后重试
+        // 含文字内容：退避后重试（超时/截断/ETIMEDOUT/SessionFailed/TaskFailed/InvalidText 均重试）
         if (attempt < MAX_ATTEMPTS) await new Promise((r) => setTimeout(r, 200 * attempt));
       }
     }
