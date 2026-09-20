@@ -3,7 +3,7 @@
 逆向豆包网页端 VoiceGenie 语音合成的 Node/TS 客户端 + OpenAI 兼容服务。
 **一套代码，两处部署**：Docker/VPS（长驻进程）或 Vercel（serverless）。
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fsewall2025%2Fdoubao-tts-ts&env=DOUBAO_TTS_API_KEY,STORAGE_BACKEND,KV_REST_API_URL,KV_REST_API_TOKEN,CRON_SECRET&envDescription=STORAGE_BACKEND%20填%20redis%EF%BC%9BKV_REST_API_*%20来自%20Vercel%20KV%2FUpstash%EF%BC%9B部署后往%20KV%20写%20cookie%20键&envLink=https%3A%2F%2Fgithub.com%2Fsewall2025%2Fdoubao-tts-ts%23部署到-vercel)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fsewall2025%2Fdoubao-tts-ts&env=DOUBAO_TTS_API_KEY&envDescription=Bearer%20鉴权密钥，自定义一串（如%20sk-xxxx）&stores=%5B%7B%22type%22%3A%22kv%22%7D%5D)
 
 ## 特性
 
@@ -43,34 +43,39 @@ cookie 落盘到挂载的 `/data`，保温续期会回写，重启不丢。
 
 ## 部署到 Vercel
 
-点一下按钮一键克隆部署（会引导你填环境变量）：
+### 一键部署
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fsewall2025%2Fdoubao-tts-ts&env=DOUBAO_TTS_API_KEY,STORAGE_BACKEND,KV_REST_API_URL,KV_REST_API_TOKEN,CRON_SECRET&envDescription=STORAGE_BACKEND%20填%20redis%EF%BC%9BKV_REST_API_*%20来自%20Vercel%20KV%2FUpstash%EF%BC%9B部署后往%20KV%20写%20cookie%20键)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fsewall2025%2Fdoubao-tts-ts&env=DOUBAO_TTS_API_KEY&envDescription=Bearer%20鉴权密钥，自定义一串（如%20sk-xxxx）&stores=%5B%7B%22type%22%3A%22kv%22%7D%5D)
 
-或命令行：
+或命令行：`vercel`（不想在 GitHub 建仓库就用这个，直推本地代码）。
 
-```bash
-vercel
+### 完整步骤
+
+**1. 连上 KV（Redis）——存 cookie 与限流计数**
+
+Vercel 面板 → 项目 → **Storage** 选项卡 → **Create Database** → 选 **Upstash for Redis** → Connect 到本项目。
+连好后 Vercel 会自动注入 `KV_REST_API_URL` / `KV_REST_API_TOKEN` 两个环境变量，**你不用手填**。
+代码检测到这两个变量就自动切到 redis 后端，`STORAGE_BACKEND` 也不用设。
+
+**2. 设鉴权密钥**
+
+面板 → **Settings → Environment Variables** 加 `DOUBAO_TTS_API_KEY`（一串自定义密码，客户端用它鉴权）。
+可选：`CRON_SECRET`（保护定时续期端点）。改了环境变量后重新 Deploy 一次生效。
+
+**3. 写入 cookie（关键，一锁一次）**
+
+cookie 是敏感登录态，不能预填进按钮/环境变量，需部署后手动写进 KV。
+在 Upstash 控制台的 **Data Browser**（或 CLI）执行：
+
+```
+SET cookie "浏览器 DevTools 复制的完整 Cookie 头"
 ```
 
-需要在 Vercel 项目设置里配环境变量：
-- `DOUBAO_TTS_API_KEY` — 鉴权密钥
-- `STORAGE_BACKEND=redis`
-- `KV_REST_API_URL` / `KV_REST_API_TOKEN` — Vercel KV（或 Upstash）
-- `CRON_SECRET`（可选）— 保护定时续期端点
+完成后访问 `https://你的域名/health`，能看到 cookie 剩余天数就通了。
 
-cookie 不走环境变量，存在 KV 里。部署后往 KV 写入 `cookie` 键（值为浏览器复制的完整 Cookie 头）：
-
-```bash
-# Upstash CLI 或控制台
-redis-cli -u "$KV_REST_API_URL" SET cookie "浏览器复制的完整 Cookie 头"
-```
-
-音色表 `voices.json` 在构建时被打包进函数（只读），无需文件系统；与 Docker 共用同一份。
-
-`vercel.json` 已配好：非 `/api/*` 请求路由到 Hono app，Cron 每天 04:00 续期 cookie。
-部署时 `vercel-build` 脚本用 esbuild 把 TS 源（含 `.ts` 扩展名 import 与 voices.json）打包成 `dist-vercel/`，
-`api/*.mjs` 薄壳引用产物作为 Function 入口（Vercel 默认 runtime 不认 .ts 源）。
+> 音色表 `voices.json` 构建时打包进函数（只读），无需配置；与 Docker 共用同一份。
+> `vercel-build` 用 esbuild 把 TS 源（含 `.ts` import 与 voices.json）打包成 `dist-vercel/`，
+> `api/*.mjs` 薄壳引用作为 Function 入口（Vercel 默认 runtime 不认 .ts 源）。
 
 > ⚠️ Vercel serverless 有两个限制：函数执行时长上限（Hobby 10s / Pro 60s），
 > 长文本合成可能超时；以及并发靠 Redis 分布式限流，比单机信号量粗。
@@ -83,7 +88,7 @@ redis-cli -u "$KV_REST_API_URL" SET cookie "浏览器复制的完整 Cookie 头"
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
 | `DOUBAO_TTS_API_KEY` | 无 | Bearer 鉴权；未设则仅回环可达 |
-| `STORAGE_BACKEND` | `file` | `file`（Docker）/ `redis`（Vercel） |
+| `STORAGE_BACKEND` | 自动 | 缺省自动检测：有 KV 变量→`redis`，否则`file`；可显式覆盖 |
 | `DOUBAO_TTS_DATA_DIR` | `./data` | file 后端 cookie 目录（Docker 内为 `/data`） |
 | `DOUBAO_TTS_HOST` | `0.0.0.0`/`127.0.0.1` | 监听地址；未设 key 时强制回环 |
 | `DOUBAO_TTS_PORT` | `8000` | 监听端口（仅 Docker/本地） |

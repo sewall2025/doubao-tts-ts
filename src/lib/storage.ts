@@ -114,23 +114,24 @@ class RedisStorage implements Storage {
 
 let _storage: Storage | null = null;
 
-/** 单例获取存储后端，按环境变量选择 */
+/** 单例获取存储后端。显式 STORAGE_BACKEND 优先；未设时自动检测：
+ *  有 KV/Upstash 环境变量 → redis；否则 file。
+ *  （Vercel 连上 Upstash 集成后会自动注入 KV_REST_API_*，无需手动设 STORAGE_BACKEND。）*/
 export function getStorage(): Storage {
   if (_storage) return _storage;
-  const backend = (process.env.STORAGE_BACKEND ?? "file").toLowerCase();
+  const kvUrl = process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL ?? "";
+  const kvToken = process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN ?? "";
+  const explicit = (process.env.STORAGE_BACKEND ?? "").trim().toLowerCase();
+  // 未显式指定时：有 KV 就用 redis，否则 file
+  const backend = explicit || (kvUrl && kvToken ? "redis" : "file");
   if (backend === "redis") {
-    // 兼容 Vercel KV / Upstash 的环境变量命名
-    const url =
-      process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL ?? "";
-    const token =
-      process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN ?? "";
-    if (!url || !token) {
+    if (!kvUrl || !kvToken) {
       throw new Error(
         "STORAGE_BACKEND=redis 需要 KV_REST_API_URL / KV_REST_API_TOKEN " +
           "(或 UPSTASH_REDIS_REST_URL / _TOKEN)",
       );
     }
-    _storage = new RedisStorage(url, token);
+    _storage = new RedisStorage(kvUrl, kvToken);
   } else {
     const dir = process.env.DOUBAO_TTS_DATA_DIR ?? process.cwd();
     _storage = new FileStorage(dir);
