@@ -230,15 +230,17 @@ export async function* synthesize(
     send("BidirectionalTTS", JSON.stringify({ text }), taskId);
     send("EndTTS", "", taskId);
 
-    // 4) 接收事件流直到 TTSEnded
+    // 4) 接收事件流直到 TTSEnded。cleanEnd 标记是否正常收尾——
+    //    超时/异常关闭时未收到 TTSEnded 视为截断，抛错让上层重试，绝不静默返回半截。
+    let cleanEnd = false;
     while (true) {
       let raw: Buffer | null;
       try {
-        raw = await recv(30000);
+        raw = await recv(15000);
       } catch {
-        break; // 超时视为结束
+        throw new Error("recv 超时（流未正常收尾，视为截断）");
       }
-      if (raw === null) break;
+      if (raw === null) throw new Error("WS 在收尾前关闭（视为截断）");
       const msg = decodeResponse(raw);
 
       if (msg.data && msg.data.length > 0) {
@@ -252,11 +254,13 @@ export async function* synthesize(
           // 忽略解析失败
         }
       } else if (msg.event === "TTSEnded" || msg.event === "SessionFinished") {
+        cleanEnd = true;
         break;
       } else if (msg.event === "SessionFailed" || msg.event === "TaskFailed") {
         throw new Error(`${msg.event}: ${msg.status_code} ${msg.status_text}`);
       }
     }
+    if (!cleanEnd) throw new Error("流未正常收尾");
   } finally {
     ws.close();
   }

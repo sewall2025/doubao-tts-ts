@@ -213,29 +213,40 @@ app.post("/v1/audio/speech", async (c) => {
       `      User-Agent="${reqUA}"`,
   );
 
-  // 缓冲返回：收完整段再带 Content-Length 一次性发出。
-  // 音频段都很短，流式无收益；chunked 传输经反向代理易被缓冲/截断。
-  // 未发出任何字节前，失败可重试（豆包瞬时并发会拒掉部分 session）且能返回正确状态码。
+  // 缓冲返回（对齐参考项目 read-aloud）：收齐完整音频再一次性发出。
+  // 客户端要么拿到带 Content-Length 的完整文件，要么拿到干净错误；
+  // 绝不会是“半截挂着”的流（差网络下流式易截断→播放器冻死）。
+  // synthesize 已在截断/超时时抛错，配合重试只返回完整结果。
   const MAX_ATTEMPTS = 3;
+  const HARD_TIMEOUT_MS = 25000; // 整段合成硬超时，卡住快速失败不无限等
   let audio: Buffer | null = null;
   let lastErr: unknown = null;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      const parts: Buffer[] = [];
-      for await (const chunk of synthesize(input, {
-        speaker,
-        format: doubaoFormat as AudioFormat,
-        speechRate: speed,
-        pitch,
-        cookie,
-      })) {
-        if (chunk.audio) parts.push(chunk.audio);
-      }
-      audio = Buffer.concat(parts);
+      audio = await Promise.race([
+        (async () => {
+          const parts: Buffer[] = [];
+          for await (const chunk of synthesize(input, {
+            speaker,
+            format: doubaoFormat as AudioFormat,
+            speechRate: speed,
+            pitch,
+            cookie,
+          })) {
+            if (chunk.audio && chunk.audio.length > 0) parts.push(chunk.audio);
+          }
+          if (parts.length === 0) throw new Error("no audio");
+          return Buffer.concat(parts);
+        })(),
+        new Promise<never>((_, rej) =>
+          setTimeout(() => rej(new Error(`合成硬超时 ${HARD_TIMEOUT_MS}ms`)), HARD_TIMEOUT_MS),
+        ),
+      ]);
       lastErr = null;
-      break; // 正常结束
+      break; // 完整结束
     } catch (e) {
       lastErr = e;
+      audio = null;
       if (attempt < MAX_ATTEMPTS) {
         await new Promise((r) => setTimeout(r, 200 * attempt)); // 退避后重试
       }
@@ -258,12 +269,8 @@ app.post("/v1/audio/speech", async (c) => {
 
   c.header("Content-Type", MEDIA_TYPES[doubaoFormat]);
   c.header("X-Doubao-Speaker", speaker);
-  // Connection: close — 每个请求独占 nginx↔node 连接，避免慢请求在复用
-  // keep-alive 连接上阻住后续响应（HTTP/1.1 响应按请求顺序返回的队头阻塞）。
-  // TTS 是一次性请求，不复用连接损失极小。
-  c.header("Connection", "close");
   console.log(`[RESP] status=200 bytes=${audio.length} ctype=${MEDIA_TYPES[doubaoFormat]} range="${reqRange}"`);
-  // Content-Length / 传输编码交给 node-server 处理（对齐参考项目 read-aloud，不手动干预）。
-  // Buffer 是共享内存池视图，按 offset/length 切出精确 ArrayBuffer
+  // Content-Length 交给 node-server 自动设（对齐 read-aloud，不手动干预）。
+  // Buffer 是共享内存池视图，按 offset/length 切出精确 ArrayBuffer。
   return c.body(audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.byteLength) as ArrayBuffer);
 });
