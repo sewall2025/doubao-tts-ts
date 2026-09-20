@@ -53,6 +53,7 @@ cookie 落盘到挂载的 `/data`，保温续期会回写，重启不丢。
 
 > 导入时 Vercel 会从 `.env.example` 自动列出一堆环境变量字段——**那些大多是 Docker 专用的，在 Vercel 上可以全留空**。
 > 真正需要的只有下面两步（KV 连接 + 鉴权密钥）。先直接 Deploy，后面再补。
+
 **2. 连上 KV（Redis）——存 cookie 与限流计数**
 
 Vercel 面板 → 项目 → **Storage** 选项卡 → **Create Database** → 选 **Upstash for Redis** → Connect 到本项目。
