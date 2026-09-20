@@ -134,7 +134,12 @@ export async function* synthesize(
   text: string,
   cfg: TTSConfig,
 ): AsyncGenerator<TTSChunk, void, unknown> {
-  const ws = new WebSocket(buildWsUrl(cfg.cookie), { headers: HEADERS(cfg.cookie) });
+  // handshakeTimeout: 握手超 8s 直接失败，不空等 OS 默认 TCP 超时（可达分钟级），
+  // 避免卡住的请求长时间占用连接槽堆阻后续响应。
+  const ws = new WebSocket(buildWsUrl(cfg.cookie), {
+    headers: HEADERS(cfg.cookie),
+    handshakeTimeout: 8000,
+  });
 
   // 收到的消息队列 + 等待器（把事件驱动转成 async 拉取）
   const queue: Buffer[] = [];

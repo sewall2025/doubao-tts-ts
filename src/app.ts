@@ -258,6 +258,10 @@ app.post("/v1/audio/speech", async (c) => {
 
   c.header("Content-Type", MEDIA_TYPES[doubaoFormat]);
   c.header("X-Doubao-Speaker", speaker);
+  // Connection: close — 每个请求独占 nginx↔node 连接，避免慢请求在复用
+  // keep-alive 连接上阻住后续响应（HTTP/1.1 响应按请求顺序返回的队头阻塞）。
+  // TTS 是一次性请求，不复用连接损失极小。
+  c.header("Connection", "close");
   console.log(`[RESP] status=200 bytes=${audio.length} ctype=${MEDIA_TYPES[doubaoFormat]} range="${reqRange}"`);
   // Content-Length / 传输编码交给 node-server 处理（对齐参考项目 read-aloud，不手动干预）。
   // Buffer 是共享内存池视图，按 offset/length 切出精确 ArrayBuffer
