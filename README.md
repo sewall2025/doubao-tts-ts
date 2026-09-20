@@ -84,8 +84,18 @@ redis-cli -u "$KV_REST_API_URL" SET cookie "浏览器复制的完整 Cookie 头"
 | --- | --- | --- |
 | `DOUBAO_TTS_API_KEY` | 无 | Bearer 鉴权；未设则仅回环可达 |
 | `STORAGE_BACKEND` | `file` | `file`（Docker）/ `redis`（Vercel） |
-| `DOUBAO_TTS_RATE_MAX` | `8` | 限流窗口内最大请求数 |
+| `DOUBAO_TTS_DATA_DIR` | `./data` | file 后端 cookie 目录（Docker 内为 `/data`） |
+| `DOUBAO_TTS_HOST` | `0.0.0.0`/`127.0.0.1` | 监听地址；未设 key 时强制回环 |
+| `DOUBAO_TTS_PORT` | `8000` | 监听端口（仅 Docker/本地） |
 | `DOUBAO_TTS_MAX_INPUT` | `4096` | 单次文本长度上限 |
+| `DOUBAO_TTS_RATE_MAX` | `8` | 限流窗口内最大请求数 |
+| `DOUBAO_TTS_RATE_WINDOW` | `1` | 限流窗口秒数 |
+| `DOUBAO_TTS_CONCURRENCY` | `8` | 同时连豆包的最大并发数（信号量） |
+| `DOUBAO_TTS_KEEPALIVE` | `1` | cookie 保温开关，`0/false/off` 关闭 |
+| `DOUBAO_TTS_KEEPALIVE_INTERVAL_H` | `12` | 保温检查间隔（小时，仅 Docker） |
+| `DOUBAO_TTS_KEEPALIVE_THRESHOLD_D` | `25` | 剩余天数低于此值才续期 |
+| `KV_REST_API_URL` / `_TOKEN` | 无 | redis 后端（Vercel KV / Upstash），也认 `UPSTASH_REDIS_REST_*` |
+| `CRON_SECRET` | 无 | （可选）保护 Vercel Cron 续期端点 |
 
 ## 端点
 
