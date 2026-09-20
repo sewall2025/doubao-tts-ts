@@ -122,6 +122,11 @@ export function decodeResponse(buf: Buffer): WsResponse {
         if (!(b & 0x80)) break;
         s += 7;
       }
+      // 长度必须是合法的非负值且不越界。这里用 32 位 |=/<< 累加，畸形的 5 字节
+      // varint 能把 bit31 置 1 得到负数（实测 [0x80,0x80,0x80,0x80,0x08] → -2147483648），
+      // 负数会让下面的 i += ln 回退，外层 while(i < buf.length) 永不终止 →
+      // 同步死循环卡死整个事件循环，连块间超时 timer 都没机会触发（实测 2e6 次迭代未退出）。
+      if (ln < 0 || i + ln > buf.length) break; // 畸形帧：停止解析，返回已解出的字段
       const raw = buf.subarray(i, i + ln);
       i += ln;
       if (name === "data") {

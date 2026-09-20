@@ -62,6 +62,11 @@ class FileStorage implements Storage {
     const now = Date.now();
     const c = this.counters.get(key);
     if (!c || now >= c.resetAt) {
+      // 新窗口：先清掉旧桶。key 是 `rl:<秒级桶号>`，每秒换一个，而上面那个
+      // 过期分支只在「同一个 key 再被查」时才走得到——旧桶永远不会被再查，所以
+      // 永远不会被清除，单向堆积（实测：模拟每秒 1 请求跑 1 小时，size 到 3600）。
+      // 按语义只需保留当前桶一条，直接 clear 比逐条扫过期更简单。
+      this.counters.clear();
       this.counters.set(key, { count: 1, resetAt: now + windowSec * 1000 });
       return 1;
     }
