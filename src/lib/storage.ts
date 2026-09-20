@@ -114,13 +114,28 @@ class RedisStorage implements Storage {
 
 let _storage: Storage | null = null;
 
+/** 按后缀查环境变量：先精确匹配，再兑底任意前缀（Vercel 连 KV 会加 doubaotts_ 等前缀）。
+ *  例：KV_REST_API_URL 或 doubaotts_KV_REST_API_URL 都能命中。优先非 READ_ONLY 的 token。*/
+function envBySuffix(suffix: string): string {
+  if (process.env[suffix]) return process.env[suffix] as string;
+  // 兜底：任意前缀 + suffix，排除只读 token
+  const keys = Object.keys(process.env).filter(
+    (k) => k.endsWith(suffix) && !k.includes("READ_ONLY"),
+  );
+  for (const k of keys) {
+    const v = (process.env[k] ?? "").trim();
+    if (v) return v;
+  }
+  return "";
+}
+
 /** 单例获取存储后端。显式 STORAGE_BACKEND 优先；未设时自动检测：
  *  有 KV/Upstash 环境变量 → redis；否则 file。
- *  （Vercel 连上 Upstash 集成后会自动注入 KV_REST_API_*，无需手动设 STORAGE_BACKEND。）*/
+ *  （Vercel 连上 Upstash 集成后自动注入 KV_REST_API_*，可带 doubaotts_ 等前缀，无需手动设 STORAGE_BACKEND。）*/
 export function getStorage(): Storage {
   if (_storage) return _storage;
-  const kvUrl = process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL ?? "";
-  const kvToken = process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN ?? "";
+  const kvUrl = envBySuffix("KV_REST_API_URL") || envBySuffix("UPSTASH_REDIS_REST_URL");
+  const kvToken = envBySuffix("KV_REST_API_TOKEN") || envBySuffix("UPSTASH_REDIS_REST_TOKEN");
   const explicit = (process.env.STORAGE_BACKEND ?? "").trim().toLowerCase();
   // 未显式指定时：有 KV 就用 redis，否则 file
   const backend = explicit || (kvUrl && kvToken ? "redis" : "file");
