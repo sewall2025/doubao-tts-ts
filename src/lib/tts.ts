@@ -33,16 +33,26 @@ export interface TTSChunk {
   sentence?: string; // 句子文本（TTSSentenceEnd）
 }
 
-/** 生成稳定设备 ID：同一 cookie 始终同一设备，避免被风控识别为大量新设备 */
+/** 生成设备 ID。stableId 同一 seed 总是同一结果（稳定）。*/
 function stableId(seed: string): string {
   const s = seed || String(Math.floor(Math.random() * 2 ** 53));
   const h = createHash("sha256").update(s).digest("hex").slice(0, 15);
   return String(7_600_000_000_000_000_000n + BigInt("0x" + h) % 99_999_999_999_999_999n);
 }
 
+// 默认每个连接用独立 device_id/web_id，避开豆包可能的每设备并发限制
+// （并发下同一 device_id 会被拒 session → 卡顿/静音）。
+// 置 DOUBAO_TTS_UNIQUE_DEVICE=0 可回退到稳定 device_id（若担心风控）。
+const UNIQUE_DEVICE = !
+  ["0", "false", "no", "off"].includes(
+    (process.env.DOUBAO_TTS_UNIQUE_DEVICE ?? "1").trim().toLowerCase(),
+  );
+
 function buildWsUrl(cookie: string): string {
-  const deviceId = stableId(cookie);
-  const webId = stableId(cookie + "_web");
+  // 独立模式：每次调用不同种子 → 不同 device_id/web_id；稳定模式：继续用 cookie 派生
+  const seed = UNIQUE_DEVICE ? `${cookie}:${randomUUID()}` : cookie;
+  const deviceId = stableId(seed);
+  const webId = stableId(seed + "_web");
   const params: Record<string, string> = {
     api_app_key: APPKEY,
     namespace: NAMESPACE,
