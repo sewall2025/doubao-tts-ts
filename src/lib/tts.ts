@@ -36,6 +36,8 @@ export interface TTSConfig {
   firstByteTimeoutMs?: number;
   /** 块间超时(ms)：流中途多久没新块就算断了。默认 CHUNK_TIMEOUT_MS */
   chunkTimeoutMs?: number;
+  /** 诊断回调：本次连接选中的设备（池下标 + device_id）。建连前同步调用一次。 */
+  onConnInfo?: (info: { devIdx: number; deviceId: string }) => void;
 }
 
 export interface TTSChunk {
@@ -65,7 +67,7 @@ const SINGLE_DEVICE = ["0", "false", "no", "off"].includes(
 const DEVICE_POOL_SIZE = SINGLE_DEVICE ? 1 : envInt("DOUBAO_TTS_CONCURRENCY", 8);
 let _rrCounter = 0; // 轮询游标
 
-function buildWsUrl(cookie: string): string {
+function buildWsUrl(cookie: string): { url: string; devIdx: number; deviceId: string } {
   // 轮询取第 idx 个设备（固定从 cookie:idx 派生，重启后仍是同一批）
   const idx = DEVICE_POOL_SIZE === 1 ? 0 : _rrCounter++ % DEVICE_POOL_SIZE;
   const seed = `${cookie}:dev${idx}`;
@@ -96,7 +98,7 @@ function buildWsUrl(cookie: string): string {
   const qs = Object.entries(params)
     .map(([k, v]) => `${k}=${v}`)
     .join("&");
-  return `${WS_URL}?${qs}`;
+  return { url: `${WS_URL}?${qs}`, devIdx: idx, deviceId };
 }
 
 function sessionPayload(cfg: TTSConfig): string {
@@ -176,7 +178,11 @@ export async function* synthesize(
   // family: 4 强制 IPv4——避开 Node happy-eyeballs 双栈连接：容器/服务器 IPv6 到豆包
   // 不通时会先试 IPv6 卡到超时再回退 IPv4，每次白耗几秒（ETIMEDOUT/AggregateError）→周期性卡顿。
   // handshakeTimeout: 握手超 6s 直接失败，不空等 OS 默认 TCP 超时。
-  const ws = new WebSocket(buildWsUrl(cfg.cookie), {
+  const conn = buildWsUrl(cfg.cookie);
+  // 诊断用：把本次连接实际用的设备回传给调用方（app.ts 打 [TRY] 日志）。
+  // 注意 _rrCounter 在 buildWsUrl 里自增，所以重试会换设备——这是当前行为，日志要能看出来。
+  cfg.onConnInfo?.({ devIdx: conn.devIdx, deviceId: conn.deviceId });
+  const ws = new WebSocket(conn.url, {
     headers: HEADERS(cfg.cookie),
     handshakeTimeout: 6000,
     family: 4,

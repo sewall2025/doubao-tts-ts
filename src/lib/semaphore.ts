@@ -21,22 +21,36 @@ const MAX_CONCURRENCY = envInt("DOUBAO_TTS_CONCURRENCY", 8);
 let active = 0;
 const waiters: Array<() => void> = [];
 
+/** 释放函数，另带本次取槽的诊断快照。 */
+export interface Release {
+  (): void;
+  /** 取槽后的活跃数（1..MAX），仅用于诊断日志 */
+  slotNo: number;
+  /** 取槽后仍在排队的请求数 */
+  queued: number;
+}
+
 /** 获取一个槽位；满了就排队等待。返回释放函数。 */
-export async function acquire(): Promise<() => void> {
+export async function acquire(): Promise<Release> {
   if (active < MAX_CONCURRENCY) {
     active += 1;
   } else {
     await new Promise<void>((resolve) => waiters.push(resolve));
     active += 1;
   }
+  const slotNo = active; // 取槽后的活跃数，仅用于诊断日志（不是稳定的槽位编号）
   let released = false;
-  return () => {
+  const release = () => {
     if (released) return; // 幂等，避免重复释放
     released = true;
     active -= 1;
     const next = waiters.shift();
     if (next) next();
   };
+  // 挂在释放函数上带出诊断信息，避免改 acquire 的返回类型（调用方仍可当普通函数用）
+  release.slotNo = slotNo;
+  release.queued = waiters.length;
+  return release as Release;
 }
 
 export { MAX_CONCURRENCY };

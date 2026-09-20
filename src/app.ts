@@ -2,13 +2,14 @@
  * Hono 应用：OpenAI 兼容 TTS 服务。
  * 一套路由，src/server.ts（Docker）与 Vercel（原生 Hono 检测，直接 serve 本文件）共用。
  */
+import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { handle } from "hono/vercel";
 import { API_KEY, MAX_INPUT_CHARS, KEEPALIVE_ENABLED, KEEPALIVE_THRESHOLD_D } from "./lib/config.js";
 import { loadCookie, cookieExpiryDays, renewCookie } from "./lib/cookie.js";
 import { checkRateLimit, RATE_MAX } from "./lib/ratelimit.js";
 import { synthesize, type AudioFormat } from "./lib/tts.js";
-import { acquire } from "./lib/semaphore.js";
+import { acquire, MAX_CONCURRENCY } from "./lib/semaphore.js";
 import { silentAudio } from "./lib/silence.js";
 import { UI_HTML } from "./lib/ui.js";
 import {
@@ -219,8 +220,11 @@ app.post("/v1/audio/speech", async (c) => {
   const speed = clampSpeed(body.speed ?? 1.0);
   const pitch = clampPitch(body.pitch ?? 0);
   const tReq = Date.now(); // 请求到达时间（用于计时排查卡顿）
+  // rid: 诊断用短 ID。客户端超时重发时会出现两条 rid 不同但 text 相同的请求，
+  // 靠它才能把「同一请求的 3 次 attempt」和「两个并行请求各自重试」区分开。
+  const rid = randomUUID().slice(0, 4);
   console.log(
-    `[REQ] voice=${speaker} format=${fmtRaw} speed=${body.speed ?? 1.0}(→${speed}) pitch=${pitch} chars=${input.length}`,
+    `[REQ] rid=${rid} voice=${speaker} format=${fmtRaw} speed=${body.speed ?? 1.0}(→${speed}) pitch=${pitch} chars=${input.length}`,
   );
 
   // 合成策略（多方向实测得出）：
@@ -247,8 +251,10 @@ app.post("/v1/audio/speech", async (c) => {
   const waitMs = Date.now() - tReq; // 排队等待信号量的耗时
   let audio: Buffer | null = null;
   let lastErr: unknown = null;
+  let usedAttempt = 0; // 最终成功（或最后一次失败）用的是第几次尝试
   try {
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      const tTry = Date.now(); // 本次尝试起点（catch 里要用，故放在 try 外）
       try {
         // 直接消费迭代器，结束/抛错都走到 synthesize 的 finally（ws 必关）。
         // 切勿再包 Promise.race 加总时长超时：race 只能「不等」，管不住被丢弃的迭代器，
@@ -260,6 +266,14 @@ app.post("/v1/audio/speech", async (c) => {
           speechRate: speed,
           pitch,
           cookie,
+          onConnInfo: ({ devIdx, deviceId }) => {
+            // slot=占槽后的活跃数/上限，q=仍在排队数 —— 判断并发是否真的并行
+            // dev 每次重试都会变（_rrCounter 在 buildWsUrl 里自增），这里如实记录
+            console.log(
+              `[TRY] rid=${rid} attempt=${attempt}/${MAX_ATTEMPTS} slot=${release.slotNo}/${MAX_CONCURRENCY} ` +
+                `q=${release.queued} dev=${devIdx} devId=${deviceId.slice(-6)} +${Date.now() - tReq}ms`,
+            );
+          },
         })) {
           if (chunk.audio && chunk.audio.length > 0) parts.push(chunk.audio);
         }
@@ -268,7 +282,8 @@ app.post("/v1/audio/speech", async (c) => {
           audio = null;
           lastErr = new Error("零音频（无异常，视为瞬时失败）");
           console.error(
-            `[attempt ${attempt}/${MAX_ATTEMPTS} failed] msg=${(lastErr as Error).message} ${inputForensics(input)}`,
+            `[attempt ${attempt}/${MAX_ATTEMPTS} failed] rid=${rid} took=${Date.now() - tTry}ms ` +
+              `msg=${(lastErr as Error).message} ${inputForensics(input)}`,
           );
           if (attempt < MAX_ATTEMPTS) {
             await new Promise((r) => setTimeout(r, 200 * attempt));
@@ -278,13 +293,16 @@ app.post("/v1/audio/speech", async (c) => {
         }
         audio = Buffer.concat(parts);
         lastErr = null;
+        usedAttempt = attempt;
         break; // 正常结束
       } catch (e) {
         lastErr = e;
         audio = null;
         const m = (e as Error)?.message || "";
+        usedAttempt = attempt;
         console.error(
-          `[attempt ${attempt}/${MAX_ATTEMPTS} failed] msg=${m || String(e)} ${inputForensics(input)}`,
+          `[attempt ${attempt}/${MAX_ATTEMPTS} failed] rid=${rid} took=${Date.now() - tTry}ms ` +
+            `msg=${m || String(e)} ${inputForensics(input)}`,
         );
         // TTSInvalidText(40402002) 是豆包的确定性拒绝（实测 21/21 全复现）：不重试，直接降级。
         if (m.includes("TTSInvalidText")) break;
@@ -302,7 +320,7 @@ app.post("/v1/audio/speech", async (c) => {
     const err = lastErr as (Error & { code?: string }) | null;
     const silence = silentAudio(doubaoFormat as AudioFormat);
     console.error(
-      `[FALLBACK silence] 该段内容已丢失 status=200 bytes=${silence.length} ` +
+      `[FALLBACK silence] 该段内容已丢失 rid=${rid} status=200 bytes=${silence.length} ` +
         `wait=${waitMs}ms total=${Date.now() - tReq}ms ` +
         `name=${err?.name ?? "?"} code=${err?.code ?? ""} ` +
         `msg=${err?.message || String(lastErr ?? "") || "no audio"} ` +
@@ -318,7 +336,10 @@ app.post("/v1/audio/speech", async (c) => {
 
   c.header("Content-Type", MEDIA_TYPES[doubaoFormat]);
   c.header("X-Doubao-Speaker", speaker);
-  console.log(`[RESP] status=200 bytes=${audio.length} wait=${waitMs}ms total=${Date.now() - tReq}ms`);
+  console.log(
+    `[RESP] rid=${rid} status=200 bytes=${audio.length} attempt=${usedAttempt}/${MAX_ATTEMPTS} ` +
+      `wait=${waitMs}ms total=${Date.now() - tReq}ms`,
+  );
   // Content-Length 交给 node-server 自动设（对齐 read-aloud，不手动干预）。
   // Buffer 是共享内存池视图，按 offset/length 切出精确 ArrayBuffer。
   return c.body(audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.byteLength) as ArrayBuffer);
