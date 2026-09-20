@@ -340,9 +340,10 @@ app.get("/api/cron/renew", async (c) => {
   return c.json({ renewed: r.ok, msg: r.msg });
 });
 
-// Vercel 原生 Hono 检测直接 serve 本文件，handle(app) 把 Hono 包成 Vercel 要的 (req)=>Response 函数。
-// 同时保留命名 export const app 供 server.ts（Docker）使用。
+// Vercel Function 入口：导出命名 HTTP 方法（Web fetch 风格）。
+// 不能用 default export——Vercel 把 default 当 Node 风格 (req,res)=>void 调用，会忽略返回的 Response。
+// 名称 export const GET/POST 会被当 fetch handler（(req)=>Response）处理。
+// 保留命名 export const app 供 server.ts（Docker）使用。
 const vercelHandler = handle(app);
-export default vercelHandler;
 export const GET = vercelHandler;
 export const POST = vercelHandler;
