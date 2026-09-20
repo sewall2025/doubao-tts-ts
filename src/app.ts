@@ -205,6 +205,7 @@ app.post("/v1/audio/speech", async (c) => {
 
   const speed = clampSpeed(body.speed ?? 1.0);
   const pitch = clampPitch(body.pitch ?? 0);
+  const tReq = Date.now(); // 请求到达时间（用于计时排查卡顿）
   console.log(
     `[REQ] voice=${speaker} format=${fmtRaw} speed=${body.speed ?? 1.0}(→${speed}) pitch=${pitch} chars=${input.length}`,
   );
@@ -224,6 +225,7 @@ app.post("/v1/audio/speech", async (c) => {
   // 单次合成硬超时；总时长需在 Vercel maxDuration=60s 内（3x18s+退避<60s）。
   const HARD_TIMEOUT_MS = 18000;
   const release = await acquire(); // 占一个并发槽（满则排队）
+  const waitMs = Date.now() - tReq; // 排队等待信号量的耗时
   let audio: Buffer | null = null;
   let lastErr: unknown = null;
   let punctuation = false; // 零内容/无效文本→走静音兑底
@@ -292,7 +294,7 @@ app.post("/v1/audio/speech", async (c) => {
   // 标点/零内容段：返回静音，客户端顺畅播过（不卡、不触发重试）
   if (punctuation) {
     audio = silentAudio(doubaoFormat as AudioFormat);
-    console.log(`[RESP] status=200 bytes=${audio.length} (silence)`);
+    console.log(`[RESP] status=200 bytes=${audio.length} (silence) wait=${waitMs}ms total=${Date.now() - tReq}ms`);
     c.header("Content-Type", MEDIA_TYPES[doubaoFormat]);
     c.header("X-Doubao-Speaker", speaker);
     return c.body(audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.byteLength) as ArrayBuffer);
@@ -302,7 +304,7 @@ app.post("/v1/audio/speech", async (c) => {
     const err = lastErr as (Error & { code?: string }) | null;
     if (err) {
       console.error(
-        `[synthesize error] ` +
+        `[synthesize error] total=${Date.now() - tReq}ms ` +
           `name=${err?.name ?? "?"} code=${err?.code ?? ""} msg=${err?.message || String(lastErr) || "(empty)"}`,
       );
     }
@@ -314,7 +316,7 @@ app.post("/v1/audio/speech", async (c) => {
 
   c.header("Content-Type", MEDIA_TYPES[doubaoFormat]);
   c.header("X-Doubao-Speaker", speaker);
-  console.log(`[RESP] status=200 bytes=${audio.length}`);
+  console.log(`[RESP] status=200 bytes=${audio.length} wait=${waitMs}ms total=${Date.now() - tReq}ms`);
   // Content-Length 交给 node-server 自动设（对齐 read-aloud，不手动干预）。
   // Buffer 是共享内存池视图，按 offset/length 切出精确 ArrayBuffer。
   return c.body(audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.byteLength) as ArrayBuffer);
