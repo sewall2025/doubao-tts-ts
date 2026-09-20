@@ -138,6 +138,19 @@ interface SpeechBody {
   pitch?: number;
 }
 
+// 输入取证：把请求文本渲染成可排查形式——JSON 转义（\n 等可见）后截断 40 字符、前 12 个码位。
+// 仅用于日志定位 TTSInvalidText 之类的异常输入，不参与任何判定。
+function inputForensics(text: string): string {
+  const escaped = JSON.stringify(text);
+  const preview = escaped.length > 40 ? `${escaped.slice(0, 40)}…` : escaped;
+  const cps: string[] = [];
+  for (const ch of text) {
+    if (cps.length >= 12) break; // for...of 按码位遍历，代理对不会被截半
+    cps.push(`U+${(ch.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0")}`);
+  }
+  return `text=${preview} cp=[${cps.join(" ")}]`;
+}
+
 app.post("/v1/audio/speech", async (c) => {
   if (!checkAuth(c.req.header("Authorization"))) return c.json(authError(), 401);
 
@@ -210,17 +223,19 @@ app.post("/v1/audio/speech", async (c) => {
     `[REQ] voice=${speaker} format=${fmtRaw} speed=${body.speed ?? 1.0}(→${speed}) pitch=${pitch} chars=${input.length}`,
   );
 
-  // 是否含可诵内容（CJK/假名/谚文/字母/数字）。无任何可读字符的纯标点/符号段才该静音。
-  // 实测：豆包对纯标点返回 bytes=0；有字母/数字/文字的则正常出音。
-  const hasSpeakable = /[\p{L}\p{N}]/u.test(input);
-
   // 合成策略（多方向实测得出）：
   // • 缓冲原子返回（对齐 read-aloud）：收齐完整音频再发，绝不发“半截流”。
   // • 并发信号量（对齐 Python）：限同时连豆包数，消除 ETIMEDOUT 连接风暴。
   //   （豆包协议一条连接只能合成一次，无法像微软那样多路复用，实测证实。）
-  // • 静音兑底：仅当输入无可诵内容（纯标点/符号）且豆包返 0 字节/TTSInvalidText 时才用静音。
-  //   有可诵内容却零字节/报错 = 瞬时失败，必须重试，最终失败返回错误（让客户端重试）。
-  // • 失败策略：确定性错误不重试；瞬时失败（含有内容却零字节）重试最多 3 次。
+  // • 失败一律静音降级：任何合成失败都返回静音 200，绝不返回 502——客户端顺序播放，
+  //   任何一段 502 都会让它永久卡死（不跳过、不重试）；静音让它无声播过、继续推进。
+  // • TTSInvalidText(40402002) 经实测是确定性拒绝（7 个纯标点候选 × 3 次串行 = 21/21 全复现），
+  //   重试对它完全无效，只白等 3-8 秒 → 不重试，直接降级。
+  // • 纯标点输入返回的是 SessionFailed(40402002)，不是零字节（当前 speaker 下实测）；
+  //   真出现零字节又无异常时按瞬时失败退避重试。
+  // ponytail: 静音降级是有意简化。天花板：这一段内容静默丢失，只能靠日志 [FALLBACK silence] 发现。
+  //   升级路径：需要感知时由客户端读响应头 X-Doubao-Fallback: silence 自行提示或重试。
+
   const MAX_ATTEMPTS = 3;
   // 单次合成硬超时；总时长需在 Vercel maxDuration=60s 内（3x18s+退避<60s）。
   const HARD_TIMEOUT_MS = 18000;
@@ -228,7 +243,6 @@ app.post("/v1/audio/speech", async (c) => {
   const waitMs = Date.now() - tReq; // 排队等待信号量的耗时
   let audio: Buffer | null = null;
   let lastErr: unknown = null;
-  let punctuation = false; // 零内容/无效文本→走静音兑底
   try {
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
@@ -251,21 +265,17 @@ app.post("/v1/audio/speech", async (c) => {
           ),
         ]);
         if (parts.length === 0) {
-          if (!hasSpeakable) {
-            // 无可诵内容（纯标点）+ 零音频 → 静音兑底
-            punctuation = true;
-            audio = null;
-            lastErr = null;
-            break;
-          }
-          // 有可诵内容却零字节 = 瞬时失败，重试
+          // 零音频且无异常：当瞬时失败，退避重试；用尽仍零字节则走静音降级
           audio = null;
-          lastErr = new Error("零音频（含可诵内容，视为瞬时失败）");
+          lastErr = new Error("零音频（无异常，视为瞬时失败）");
+          console.error(
+            `[attempt ${attempt}/${MAX_ATTEMPTS} failed] msg=${(lastErr as Error).message} ${inputForensics(input)}`,
+          );
           if (attempt < MAX_ATTEMPTS) {
             await new Promise((r) => setTimeout(r, 200 * attempt));
             continue;
           }
-          break; // 用尽重试仍零字节 → 返回错误
+          break;
         }
         audio = Buffer.concat(parts);
         lastErr = null;
@@ -274,16 +284,13 @@ app.post("/v1/audio/speech", async (c) => {
         lastErr = e;
         audio = null;
         const m = (e as Error)?.message || "";
-        // 只有「无可诵内容」（纯标点）的会话失败才走静音且不重试。
-        // 其余一切失败（含文字内容）——包括 SessionFailed/TaskFailed——都当瞬时错误重试：
-        // 实测＋用户反馈证实，豆包在并发下会拒掉部分 session（SessionFailed），但手动重试即成，
-        // 说明它们是瞬时的，不能当确定性错误立即失败。
-        if (!hasSpeakable) {
-          punctuation = true;
-          lastErr = null;
-          break;
-        }
-        // 含文字内容：退避后重试（超时/截断/ETIMEDOUT/SessionFailed/TaskFailed/InvalidText 均重试）
+        console.error(
+          `[attempt ${attempt}/${MAX_ATTEMPTS} failed] msg=${m || String(e)} ${inputForensics(input)}`,
+        );
+        // TTSInvalidText(40402002) 是豆包的确定性拒绝（实测 21/21 全复现）：不重试，直接降级。
+        if (m.includes("TTSInvalidText")) break;
+        // 其余失败（超时/截断/ETIMEDOUT/SessionFailed/TaskFailed）当瞬时错误：实测并发下豆包会拒掉
+        // 部分 session，手动重试即成，所以退避后重试。
         if (attempt < MAX_ATTEMPTS) await new Promise((r) => setTimeout(r, 200 * attempt));
       }
     }
@@ -291,26 +298,22 @@ app.post("/v1/audio/speech", async (c) => {
     release();
   }
 
-  // 标点/零内容段：返回静音，客户端顺畅播过（不卡、不触发重试）
-  if (punctuation) {
-    audio = silentAudio(doubaoFormat as AudioFormat);
-    console.log(`[RESP] status=200 bytes=${audio.length} (silence) wait=${waitMs}ms total=${Date.now() - tReq}ms`);
-    c.header("Content-Type", MEDIA_TYPES[doubaoFormat]);
-    c.header("X-Doubao-Speaker", speaker);
-    return c.body(audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.byteLength) as ArrayBuffer);
-  }
-
+  // 统一降级出口：任何合成失败（异常 / 零字节 / 重试用尽）都返回静音 200，客户端无声播过。
   if (lastErr || !audio || audio.length === 0) {
     const err = lastErr as (Error & { code?: string }) | null;
-    if (err) {
-      console.error(
-        `[synthesize error] total=${Date.now() - tReq}ms ` +
-          `name=${err?.name ?? "?"} code=${err?.code ?? ""} msg=${err?.message || String(lastErr) || "(empty)"}`,
-      );
-    }
-    return c.json(
-      { error: { message: `Doubao synthesis failed: ${err?.message || "no audio"}`, type: "upstream_error" } },
-      502,
+    const silence = silentAudio(doubaoFormat as AudioFormat);
+    console.error(
+      `[FALLBACK silence] 该段内容已丢失 status=200 bytes=${silence.length} ` +
+        `wait=${waitMs}ms total=${Date.now() - tReq}ms ` +
+        `name=${err?.name ?? "?"} code=${err?.code ?? ""} ` +
+        `msg=${err?.message || String(lastErr ?? "") || "no audio"} ` +
+        inputForensics(input),
+    );
+    c.header("Content-Type", MEDIA_TYPES[doubaoFormat]);
+    c.header("X-Doubao-Speaker", speaker);
+    c.header("X-Doubao-Fallback", "silence");
+    return c.body(
+      silence.buffer.slice(silence.byteOffset, silence.byteOffset + silence.byteLength) as ArrayBuffer,
     );
   }
 

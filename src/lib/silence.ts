@@ -1,11 +1,14 @@
 /**
- * 静音音频兜底。
+ * 合成失败兜底：返回一小段合法静音音频。
  *
- * 豆包对纯标点/符号段返回「合法会话、零字节」（bytes=0），或偶发 TTSInvalidText。
- * 客户端顺序播放，若这类段返回错误(502)会卡住并重试(确定性失败→死循环)。
+ * 豆包对纯标点/符号段返回 SessionFailed 40402002 TTSInvalidText（实测确定性：7 个纯标点候选
+ * × 3 次串行 = 21/21 全复现，重试无效）。
+ * 客户端顺序播放，这类段若返回错误(502)会永久卡死：它既不跳过该段继续播下一段，
+ * 也不重新请求，播放指针就停在那里不动，只能人工重启。
  *
  * 微软 Edge TTS 对标点返回的就是静音——参考项目 read-aloud 因此「标点无问题」。
- * 本模块对齐该行为：这类段返回一小段合法静音音频(200)，客户端无声播过、顺畅推进。
+ * 本模块对齐该行为：失败段返回一小段合法静音音频(200)，客户端无声播过、顺畅推进。
+ * 调用方（src/app.ts）会加 X-Doubao-Fallback: silence 响应头并打 [FALLBACK silence] 日志。
  *
  * mp3 用预生成的合法静音帧(ffmpeg: anullsrc 24kHz mono 32k, ~0.3s)。
  * wav/pcm 程序生成静音。opus 罕见，退回 mp3 静音字节（客户端只用 mp3）。
@@ -40,7 +43,7 @@ function silentWav(): Buffer {
   return buf; // data 段已是全 0 静音
 }
 
-/** 返回指定格式的一小段静音音频。用于标点/零内容段，让客户端顺畅播过。 */
+/** 返回指定格式的一小段静音音频。用于任何合成失败的段，让客户端顺畅播过。 */
 export function silentAudio(format: AudioFormat): Buffer {
   switch (format) {
     case "wav":
