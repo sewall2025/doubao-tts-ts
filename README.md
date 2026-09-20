@@ -96,7 +96,31 @@ curl https://你的域名/api/cron/renew
 # {"renewed":false,"reason":"剩余 28.8 天，无需续期"}  ← 这样就是通的
 ```
 
-**建议设 `CRON_SECRET`**：不设的话这个端点是公开的，任何人能触发续期。在 **Settings → Environment Variables** 加一个随机字符串即可——Vercel Cron 会自动带 `Authorization: Bearer <CRON_SECRET>` 请求，**无需额外配置**；设了之后上面那条 curl 会返 401（正常）。
+**设 `CRON_SECRET`（推荐）**
+
+不设的话 `/api/cron/renew` 是公开的，任何人能反复触发续期。设法：
+
+1. **生成一个随机字符串**（任意长度都行，建议 32 位以上）：
+
+   ```bash
+   openssl rand -hex 32
+   # 或 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+   ```
+
+2. **填进 Vercel**：面板 → 项目 → **Settings → Environment Variables** → Add New
+   - Key：`CRON_SECRET`
+   - Value：刚生成的字符串
+   - Environments：勾上 **Production**（其他环境可选）
+
+3. **重新 Deploy 一次**（环境变量改动需重新部署才生效）。
+
+设完就行了，**客户端和 Cron 都不用再配**：Vercel Cron 调自己的函数时会自动带上 `Authorization: Bearer <CRON_SECRET>`。
+
+**验证**：再试上面那条 curl，应该返 `{"error":"unauthorized"}`（401）——**这说明保护生效了**。想手动触发得自己带头：
+
+```bash
+curl -H "Authorization: Bearer 你的CRON_SECRET" https://你的域名/api/cron/renew
+```
 
 > ⚠️ Vercel **Hobby 套餐的 Cron 每天只能跑 1 次且执行时间不保证精准**（可能漂几小时），对保温这种“剩 25 天才续”的场景完全够用。
 > 若 cookie 已经过期，Cron 救不回来，需重新执行步骤 4 写入新 cookie。
