@@ -49,7 +49,7 @@ cookie 落盘到挂载的 `/data`，保温续期会回写，重启不丢。
 
 先点 GitHub 右上角 **Fork** 把本仓库复制到你自己账号。
 然后打开 [vercel.com/new](https://vercel.com/new) → **Import Git Repository** → 选你刚 Fork 的 `doubao-tts-ts` → Import。
-构建配置保持默认即可（`vercel.json` 和 `vercel-build` 已在仓库里）。
+构建配置保持默认即可（Vercel 自动识别 Hono，直接编译运行 `src/app.ts`）。
 
 > 导入时 Vercel 只会从 `.env.example` 列出 `DOUBAO_TTS_API_KEY` 一个字段（Docker 专用变量已拆到 `.env.docker.example`）。
 > 填上鉴权密钥先 Deploy，KV 连接和 cookie 写入见下面步骤。
@@ -77,8 +77,9 @@ SET cookie "浏览器 DevTools 复制的完整 Cookie 头"
 完成后访问 `https://你的域名/health`，能看到 cookie 剩余天数就通了。
 
 > 音色表 `voices.json` 构建时打包进函数（只读），无需配置；与 Docker 共用同一份。
-> `vercel-build` 用 esbuild 把 TS 源（含 `.ts` import 与 voices.json）打包成 `dist-vercel/`，
-> `api/*.mjs` 薄壳引用作为 Function 入口（Vercel 默认 runtime 不认 .ts 源）。
+> 音色表 `voices.json` 与源码一同被 Vercel 编译打包（只读），无需配置；与 Docker 共用同一份。
+> Vercel 原生支持 Hono：自动编译 `src/`（import 用 `.js` 扩展名指向 `.ts`，符合 TS ESM 约定），
+> `src/app.ts` 用 `handle(app)`（hono/vercel）导出 Function 入口，无需额外构建步骤。
 
 > ⚠️ Vercel serverless 有两个限制：函数执行时长上限（Hobby 10s / Pro 60s），
 > 长文本合成可能超时；以及并发靠 Redis 分布式限流，比单机信号量粗。

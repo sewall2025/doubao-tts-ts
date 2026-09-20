@@ -1,10 +1,11 @@
 /**
  * Hono 应用：OpenAI 兼容 TTS 服务。
- * 一套路由，src/server.ts（Docker）与 api/index.ts（Vercel）共用。
+ * 一套路由，src/server.ts（Docker）与 Vercel（原生 Hono 检测，直接 serve 本文件）共用。
  */
 import { Hono } from "hono";
-import { API_KEY, MAX_INPUT_CHARS, KEEPALIVE_ENABLED } from "./lib/config.js";
-import { loadCookie, cookieExpiryDays } from "./lib/cookie.js";
+import { handle } from "hono/vercel";
+import { API_KEY, MAX_INPUT_CHARS, KEEPALIVE_ENABLED, KEEPALIVE_THRESHOLD_D } from "./lib/config.js";
+import { loadCookie, cookieExpiryDays, renewCookie } from "./lib/cookie.js";
 import { checkRateLimit, RATE_MAX } from "./lib/ratelimit.js";
 import { synthesize, type AudioFormat } from "./lib/tts.js";
 import { acquire } from "./lib/semaphore.js";
@@ -323,6 +324,25 @@ app.post("/v1/audio/speech", async (c) => {
   return c.body(audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.byteLength) as ArrayBuffer);
 });
 
-// Vercel 原生 Hono 检测会把本文件当函数入口，需要 default export（函数/server）。
-// Hono 实例本身可作 fetch handler；同时保留命名 export 供 server.ts / 打包入口使用。
-export default app;
+// Vercel Cron 端点（serverless 无常驻进程，用 cron 替代 setInterval 定时续期）。
+// vercel.json 的 crons 每天打这个路径；可选 CRON_SECRET 校验防外部误触发。
+app.get("/api/cron/renew", async (c) => {
+  const secret = process.env.CRON_SECRET;
+  if (secret) {
+    const auth = c.req.header("Authorization") ?? "";
+    if (auth !== `Bearer ${secret}`) return c.json({ error: "unauthorized" }, 401);
+  }
+  const days = await cookieExpiryDays();
+  if (days !== null && days >= KEEPALIVE_THRESHOLD_D) {
+    return c.json({ renewed: false, reason: `剩余 ${days.toFixed(1)} 天，无需续期` });
+  }
+  const r = await renewCookie();
+  return c.json({ renewed: r.ok, msg: r.msg });
+});
+
+// Vercel 原生 Hono 检测直接 serve 本文件，handle(app) 把 Hono 包成 Vercel 要的 (req)=>Response 函数。
+// 同时保留命名 export const app 供 server.ts（Docker）使用。
+const vercelHandler = handle(app);
+export default vercelHandler;
+export const GET = vercelHandler;
+export const POST = vercelHandler;
