@@ -17,7 +17,8 @@ const shared = {
   platform: "node",
   target: "node20",
   packages: "external", // hono/ws 等留外部，Vercel 装 node_modules 后解析
-  sourcemap: true,
+  sourcemap: false, // 关闭：sourcemap 会引用 src/*.ts，Vercel @vercel/nft 顺着追踪会把 src 拉进 lambda
+                    // 并编译 src/app.ts→app.js，其 .ts 扩展名 import 运行时解析失败。
   logLevel: "info",
 };
 
