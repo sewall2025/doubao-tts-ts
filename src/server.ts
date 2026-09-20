@@ -3,15 +3,15 @@
  * 运行: node --experimental-strip-types src/server.ts
  */
 import { serve } from "@hono/node-server";
-import { app } from "./app";
+import { app } from "./app.js";
 import {
   API_KEY,
   KEEPALIVE_ENABLED,
   KEEPALIVE_INTERVAL_H,
   KEEPALIVE_THRESHOLD_D,
-} from "./lib/config";
-import { loadCookie, cookieExpiryDays, renewCookie } from "./lib/cookie";
-import { voiceCatalog } from "./lib/voices";
+} from "./lib/config.js";
+import { loadCookie, cookieExpiryDays, renewCookie } from "./lib/cookie.js";
+import { voiceCatalog } from "./lib/voices.js";
 
 const HOST = process.env.DOUBAO_TTS_HOST || (API_KEY ? "0.0.0.0" : "127.0.0.1");
 const PORT = parseInt(process.env.DOUBAO_TTS_PORT || "8000", 10);

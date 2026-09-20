@@ -10,7 +10,7 @@
  * mp3 用预生成的合法静音帧(ffmpeg: anullsrc 24kHz mono 32k, ~0.3s)。
  * wav/pcm 程序生成静音。opus 罕见，退回 mp3 静音字节（客户端只用 mp3）。
  */
-import type { AudioFormat } from "./tts";
+import type { AudioFormat } from "./tts.js";
 
 // ffmpeg -f lavfi -i anullsrc=r=24000:cl=mono -t 0.05 -b:a 32k -acodec libmp3lame，716 字节合法可播（50ms）
 const SILENT_MP3_B64 =

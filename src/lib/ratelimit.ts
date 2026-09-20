@@ -9,7 +9,7 @@
  *   DOUBAO_TTS_RATE_WINDOW  窗口秒数（默认 1）
  * 语义：近似「每窗口 N 个」，比信号量粗但对 serverless 友好。
  */
-import { getStorage } from "./storage";
+import { getStorage } from "./storage.js";
 
 function envInt(name: string, def: number): number {
   const raw = (process.env[name] ?? "").trim();

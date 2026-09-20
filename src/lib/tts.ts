@@ -4,7 +4,7 @@
  */
 import { randomUUID, createHash } from "node:crypto";
 import { WebSocket } from "ws";
-import { encodeRequest, decodeResponse } from "./protobuf";
+import { encodeRequest, decodeResponse } from "./protobuf.js";
 
 // ---------------- 协议常量 ----------------
 export const APPKEY = "GOqQpfo1fO7slHv8";

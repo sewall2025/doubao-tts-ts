@@ -3,8 +3,8 @@
  * 被 esbuild 打包成 dist-vercel/cron/renew.js，再由 api/cron/renew.mjs 薄壳引用。
  * 可选用 CRON_SECRET 校验，防止被外部随意触发。
  */
-import { renewCookie, cookieExpiryDays } from "../lib/cookie";
-import { KEEPALIVE_THRESHOLD_D } from "../lib/config";
+import { renewCookie, cookieExpiryDays } from "../lib/cookie.js";
+import { KEEPALIVE_THRESHOLD_D } from "../lib/config.js";
 
 export default async function handler(req: Request): Promise<Response> {
   // Vercel Cron 会带 Authorization: Bearer $CRON_SECRET（若配置了）

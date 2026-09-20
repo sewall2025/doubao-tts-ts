@@ -4,7 +4,7 @@
  * 存储用 Storage 抽象（file 或 redis），key 固定为 "cookie"。
  * 心跳端点 /passport/token/beat/v2/ 会滚动续期核心登录态到 ~29.9 天。
  */
-import { getStorage } from "./storage";
+import { getStorage } from "./storage.js";
 
 const RENEW_HOST = "www.doubao.com";
 const RENEW_PATH = "/passport/token/beat/v2/?aid=497858";
