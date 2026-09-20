@@ -3,7 +3,7 @@
 逆向豆包网页端 VoiceGenie 语音合成的 Node/TS 客户端 + OpenAI 兼容服务。
 **一套代码，两处部署**：Docker/VPS（长驻进程）或 Vercel（serverless）。
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fsewall2025%2Fdoubao-tts-ts&env=DOUBAO_TTS_API_KEY&envDescription=Bearer%20鉴权密钥，自定义一串（如%20sk-xxxx）&stores=%5B%7B%22type%22%3A%22kv%22%7D%5D)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new) · 先 Fork 本仓库，再在 Vercel 导入你的 Fork（见[部署到 Vercel](#部署到-vercel)）
 
 ## 特性
 
@@ -43,26 +43,28 @@ cookie 落盘到挂载的 `/data`，保温续期会回写，重启不丢。
 
 ## 部署到 Vercel
 
-### 一键部署
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fsewall2025%2Fdoubao-tts-ts&env=DOUBAO_TTS_API_KEY&envDescription=Bearer%20鉴权密钥，自定义一串（如%20sk-xxxx）&stores=%5B%7B%22type%22%3A%22kv%22%7D%5D)
-
-或命令行：`vercel`（不想在 GitHub 建仓库就用这个，直推本地代码）。
-
 ### 完整步骤
 
-**1. 连上 KV（Redis）——存 cookie 与限流计数**
+**1. Fork 本仓库并导入 Vercel**
+
+先点 GitHub 右上角 **Fork** 把本仓库复制到你自己账号。
+然后打开 [vercel.com/new](https://vercel.com/new) → **Import Git Repository** → 选你刚 Fork 的 `doubao-tts-ts` → Import。
+构建配置保持默认即可（`vercel.json` 和 `vercel-build` 已在仓库里）。
+
+> 导入时 Vercel 会从 `.env.example` 自动列出一堆环境变量字段——**那些大多是 Docker 专用的，在 Vercel 上可以全留空**。
+> 真正需要的只有下面两步（KV 连接 + 鉴权密钥）。先直接 Deploy，后面再补。
+**2. 连上 KV（Redis）——存 cookie 与限流计数**
 
 Vercel 面板 → 项目 → **Storage** 选项卡 → **Create Database** → 选 **Upstash for Redis** → Connect 到本项目。
 连好后 Vercel 会自动注入 `KV_REST_API_URL` / `KV_REST_API_TOKEN` 两个环境变量，**你不用手填**。
 代码检测到这两个变量就自动切到 redis 后端，`STORAGE_BACKEND` 也不用设。
 
-**2. 设鉴权密钥**
+**3. 设鉴权密钥**
 
 面板 → **Settings → Environment Variables** 加 `DOUBAO_TTS_API_KEY`（一串自定义密码，客户端用它鉴权）。
 可选：`CRON_SECRET`（保护定时续期端点）。改了环境变量后重新 Deploy 一次生效。
 
-**3. 写入 cookie（关键，一锁一次）**
+**4. 写入 cookie（关键，一锁一次）**
 
 cookie 是敏感登录态，不能预填进按钮/环境变量，需部署后手动写进 KV。
 在 Upstash 控制台的 **Data Browser**（或 CLI）执行：
