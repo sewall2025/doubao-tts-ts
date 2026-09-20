@@ -1,5 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "src/app.ts": { "maxDuration": 60 }
+  },
   "crons": [
     { "path": "/api/cron/renew", "schedule": "0 4 * * *" }
   ]

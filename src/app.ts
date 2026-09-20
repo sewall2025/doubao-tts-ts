@@ -221,7 +221,8 @@ app.post("/v1/audio/speech", async (c) => {
   //   有可诵内容却零字节/报错 = 瞬时失败，必须重试，最终失败返回错误（让客户端重试）。
   // • 失败策略：确定性错误不重试；瞬时失败（含有内容却零字节）重试最多 3 次。
   const MAX_ATTEMPTS = 3;
-  const HARD_TIMEOUT_MS = 25000; // 整段合成硬超时，卡住快速失败不无限等
+  // 单次合成硬超时；总时长需在 Vercel maxDuration=60s 内（3x18s+退避<60s）。
+  const HARD_TIMEOUT_MS = 18000;
   const release = await acquire(); // 占一个并发槽（满则排队）
   let audio: Buffer | null = null;
   let lastErr: unknown = null;
