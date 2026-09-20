@@ -202,8 +202,15 @@ app.post("/v1/audio/speech", async (c) => {
 
   const speed = clampSpeed(body.speed ?? 1.0);
   const pitch = clampPitch(body.pitch ?? 0);
+  const reqRange = c.req.header("Range") ?? "";
+  const reqUA = c.req.header("User-Agent") ?? "";
+  const reqConn = c.req.header("Connection") ?? "";
+  const reqAccept = c.req.header("Accept") ?? "";
+  const reqAcceptEnc = c.req.header("Accept-Encoding") ?? "";
   console.log(
-    `[REQ] voice=${speaker} format=${fmtRaw} speed=${body.speed ?? 1.0}(→${speed}) pitch=${pitch} chars=${input.length}`,
+    `[REQ] voice=${speaker} format=${fmtRaw} speed=${body.speed ?? 1.0}(→${speed}) pitch=${pitch} chars=${input.length}\n` +
+      `      Range="${reqRange}" Connection="${reqConn}" Accept="${reqAccept}" Accept-Encoding="${reqAcceptEnc}"\n` +
+      `      User-Agent="${reqUA}"`,
   );
 
   // 缓冲返回：收完整段再带 Content-Length 一次性发出。
@@ -252,6 +259,7 @@ app.post("/v1/audio/speech", async (c) => {
   c.header("Content-Type", MEDIA_TYPES[doubaoFormat]);
   c.header("X-Doubao-Speaker", speaker);
   c.header("Content-Length", String(audio.length));
+  console.log(`[RESP] status=200 bytes=${audio.length} ctype=${MEDIA_TYPES[doubaoFormat]} range="${reqRange}"`);
   // Buffer 是共享内存池视图，按 offset/length 切出精确 ArrayBuffer
   return c.body(audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.byteLength) as ArrayBuffer);
 });
