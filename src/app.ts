@@ -227,6 +227,8 @@ app.post("/v1/audio/speech", async (c) => {
   // • 缓冲原子返回（对齐 read-aloud）：收齐完整音频再发，绝不发“半截流”。
   // • 并发信号量（对齐 Python）：限同时连豆包数，消除 ETIMEDOUT 连接风暴。
   //   （豆包协议一条连接只能合成一次，无法像微软那样多路复用，实测证实。）
+  // • 超时下沉到 tts.ts（连接所有者）：首字节 6s + 块间 8s 两层，不卡整段总时长。
+  //   此处只管重试策略，绝不用 Promise.race——详见下方循环里的注释。
   // • 失败一律静音降级：任何合成失败都返回静音 200，绝不返回 502——客户端顺序播放，
   //   任何一段 502 都会让它永久卡死（不跳过、不重试）；静音让它无声播过、继续推进。
   // • TTSInvalidText(40402002) 经实测是确定性拒绝（7 个纯标点候选 × 3 次串行 = 21/21 全复现），
@@ -237,8 +239,10 @@ app.post("/v1/audio/speech", async (c) => {
   //   升级路径：需要感知时由客户端读响应头 X-Doubao-Fallback: silence 自行提示或重试。
 
   const MAX_ATTEMPTS = 3;
-  // 单次合成硬超时；总时长需在 Vercel maxDuration=60s 内（3x18s+退避<60s）。
-  const HARD_TIMEOUT_MS = 18000;
+  // 超时不在这里管：由 synthesize 内部的首字节(6s)/块间(8s)两层超时负责，它拥有 ws
+  // 生命周期，能真正关掉连接。原来这里的 HARD_TIMEOUT_MS=18000 有两个错：
+  // ① 它卡的是合成总时长，而总时长随文本长度线性增长（47 字≈ 12-16s 是正常值），必然误判长文本；
+  // ② 它靠 Promise.race 实现，超时只丢弃迭代器而不关 ws → 每次超时泄露一条连接。
   const release = await acquire(); // 占一个并发槽（满则排队）
   const waitMs = Date.now() - tReq; // 排队等待信号量的耗时
   let audio: Buffer | null = null;
@@ -246,24 +250,19 @@ app.post("/v1/audio/speech", async (c) => {
   try {
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
-        const parts: Buffer[] = await Promise.race([
-          (async () => {
-            const acc: Buffer[] = [];
-            for await (const chunk of synthesize(input, {
-              speaker,
-              format: doubaoFormat as AudioFormat,
-              speechRate: speed,
-              pitch,
-              cookie,
-            })) {
-              if (chunk.audio && chunk.audio.length > 0) acc.push(chunk.audio);
-            }
-            return acc;
-          })(),
-          new Promise<never>((_, rej) =>
-            setTimeout(() => rej(new Error(`合成硬超时 ${HARD_TIMEOUT_MS}ms`)), HARD_TIMEOUT_MS),
-          ),
-        ]);
+        // 直接消费迭代器，结束/抛错都走到 synthesize 的 finally（ws 必关）。
+        // 切勿再包 Promise.race 加总时长超时：race 只能「不等」，管不住被丢弃的迭代器，
+        // finally 不执行 → ws 泄露继续占豆包配额，重试再叠一条，越重试越挤。
+        const parts: Buffer[] = [];
+        for await (const chunk of synthesize(input, {
+          speaker,
+          format: doubaoFormat as AudioFormat,
+          speechRate: speed,
+          pitch,
+          cookie,
+        })) {
+          if (chunk.audio && chunk.audio.length > 0) parts.push(chunk.audio);
+        }
         if (parts.length === 0) {
           // 零音频且无异常：当瞬时失败，退避重试；用尽仍零字节则走静音降级
           audio = null;

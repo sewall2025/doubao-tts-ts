@@ -20,12 +20,22 @@ const UA =
 
 export type AudioFormat = "mp3" | "ogg_opus" | "wav" | "pcm";
 
+// 两层流健康度超时（默认值，可按 cfg 覆盖）。
+// 首字节 6s：实测正常段 1.8-5.4s 内就出音频，握手也只给 6s，超了就是真卡住。
+// 块间 8s：流一旦开始产出，块间间隔远小于此；8s 没新块说明连接已死。
+export const FIRST_BYTE_TIMEOUT_MS = 6000;
+export const CHUNK_TIMEOUT_MS = 8000;
+
 export interface TTSConfig {
   speaker: string;
   format: AudioFormat;
   speechRate: number; // 倍率，1.0 正常
   pitch: number; // 半音，-12~12
   cookie: string;
+  /** 首字节超时(ms)：多久没收到第一块音频就算故障。默认 FIRST_BYTE_TIMEOUT_MS */
+  firstByteTimeoutMs?: number;
+  /** 块间超时(ms)：流中途多久没新块就算断了。默认 CHUNK_TIMEOUT_MS */
+  chunkTimeoutMs?: number;
 }
 
 export interface TTSChunk {
@@ -147,6 +157,17 @@ const HEADERS = (cookie: string): Record<string, string> => ({
  * 合成语音，返回异步迭代器（边合成边产出音频块）。
  * 事件流: StartTask→TaskStarted, StartSession→SessionStarted,
  *         BidirectionalTTS+EndTTS, 然后 TTSResponse(音频)... TTSEnded。
+ *
+ * 超时由本函数自己管（连接的所有权在这里），调用方绝不要在外面包 Promise.race：
+ * race 超时只会「丢弃」迭代器，finally 永不执行 → ws 不关，泄露的连接继续占豆包配额，
+ * 重试再叠一条，越重试挤得越狠（实测：ECONNRESET / TLS disconnected / handshake timed out 连环）。
+ *
+ * 两层超时替代原来的「整段硬超时」：后者计量的是合成总时长，而总时长随文本长度
+ * 线性增长（实测 3-4 字符/秒），用固定阈值卡它必然误判长文本。健康度该看流是不是卡着：
+ *   • 首字节超时：豆包迟迟不出第一块 = 真故障，快速失败交给上层重试。
+ *   • 块间超时：流中途断了才是故障；一直在出音频就是正常工作，不设总时长上限。
+ * ponytail: 不设总时长上限的天花板——超长输入（近 MAX_INPUT=4096 字）合成可能超过 Vercel
+ *   maxDuration=60s 被平台杀掉。升级路径：限 MAX_INPUT 或由调用方分段，而不是再加超时。
  */
 export async function* synthesize(
   text: string,
@@ -229,11 +250,15 @@ export async function* synthesize(
     );
 
   try {
+    // 两层超时阈值（cfg 可覆盖）。握手阶段的控制事件也算「出首字节前」，共用 firstByteMs：
+    // 原来写死 20000ms，卡在握手上就要白等 20 秒，远超客户端耐心。
+    const firstByteMs = cfg.firstByteTimeoutMs ?? FIRST_BYTE_TIMEOUT_MS;
+    const chunkMs = cfg.chunkTimeoutMs ?? CHUNK_TIMEOUT_MS;
     await waitOpen();
 
     // 1) StartTask
     send("StartTask");
-    let r = decodeResponse((await recv(20000)) ?? Buffer.alloc(0));
+    let r = decodeResponse((await recv(firstByteMs)) ?? Buffer.alloc(0));
     if (r.event !== "TaskStarted") {
       throw new Error(`StartTask 失败: ${r.status_code} ${r.status_text}`);
     }
@@ -241,7 +266,7 @@ export async function* synthesize(
 
     // 2) StartSession
     send("StartSession", sessionPayload(cfg), taskId);
-    r = decodeResponse((await recv(20000)) ?? Buffer.alloc(0));
+    r = decodeResponse((await recv(firstByteMs)) ?? Buffer.alloc(0));
     if (r.event !== "SessionStarted") {
       throw new Error(`StartSession 失败: ${r.status_code} ${r.status_text}`);
     }
@@ -252,18 +277,25 @@ export async function* synthesize(
 
     // 4) 接收事件流直到 TTSEnded。cleanEnd 标记是否正常收尾——
     //    超时/异常关闭时未收到 TTSEnded 视为截断，抛错让上层重试，绝不静默返回半截。
+    //    超时分两层：出第一块音频前用首字节阈值，之后改用（更宽的）块间阈值。
     let cleanEnd = false;
+    let gotAudio = false;
     while (true) {
       let raw: Buffer | null;
       try {
-        raw = await recv(15000);
+        raw = await recv(gotAudio ? chunkMs : firstByteMs);
       } catch {
-        throw new Error("recv 超时（流未正常收尾，视为截断）");
+        throw new Error(
+          gotAudio
+            ? `块间超时 ${chunkMs}ms（流中断，视为截断）`
+            : `首字节超时 ${firstByteMs}ms（豆包未出音频）`,
+        );
       }
       if (raw === null) throw new Error("WS 在收尾前关闭（视为截断）");
       const msg = decodeResponse(raw);
 
       if (msg.data && msg.data.length > 0) {
+        gotAudio = true; // 首块到手：后续改用块间超时，不再卡总时长
         yield { audio: msg.data };
       }
       if (msg.event === "TTSSentenceEnd") {
@@ -282,6 +314,16 @@ export async function* synthesize(
     }
     if (!cleanEnd) throw new Error("流未正常收尾");
   } finally {
-    ws.close();
+    // 必须真死掉：这个 finally 也走「调用方提前 break / 抛弃迭代器」的路径（异步生成器的
+    // .return() 会触发它）。ws.close() 只发关闭帧等对端回应，网络卡死时可能永不完成，
+    // 连接就挂着占豆包配额——所以给 1s 宽限期，过后 terminate() 硬断。
+    if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+      const killer = setTimeout(() => ws.terminate(), 1000);
+      killer.unref?.(); // 不阻止进程退出
+      ws.once("close", () => clearTimeout(killer));
+      ws.close();
+    } else {
+      ws.terminate();
+    }
   }
 }
