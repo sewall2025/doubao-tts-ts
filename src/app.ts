@@ -322,3 +322,7 @@ app.post("/v1/audio/speech", async (c) => {
   // Buffer 是共享内存池视图，按 offset/length 切出精确 ArrayBuffer。
   return c.body(audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.byteLength) as ArrayBuffer);
 });
+
+// Vercel 原生 Hono 检测会把本文件当函数入口，需要 default export（函数/server）。
+// Hono 实例本身可作 fetch handler；同时保留命名 export 供 server.ts / 打包入口使用。
+export default app;
