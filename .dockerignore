@@ -5,6 +5,10 @@ node_modules
 .env.*
 .store_*
 .vercel
+dist-vercel
+api
+build.js
+src/vercel
 *.log
 .DS_Store
 Dockerfile

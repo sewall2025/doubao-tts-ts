@@ -51,9 +51,18 @@ vercel
 - `KV_REST_API_URL` / `KV_REST_API_TOKEN` — Vercel KV（或 Upstash）
 - `CRON_SECRET`（可选）— 保护定时续期端点
 
-cookie 不再走环境变量：部署后往 KV 写入 `cookie` 键（Upstash/Vercel KV 控制台或 CLI），值为浏览器复制的完整 Cookie 头。
+cookie 不走环境变量，存在 KV 里。部署后往 KV 写入 `cookie` 键（值为浏览器复制的完整 Cookie 头）：
 
-`vercel.json` 已配好：所有请求路由到 Hono app，Cron 每天 04:00 续期 cookie。
+```bash
+# Upstash CLI 或控制台
+redis-cli -u "$KV_REST_API_URL" SET cookie "浏览器复制的完整 Cookie 头"
+```
+
+音色表 `voices.json` 在构建时被打包进函数（只读），无需文件系统；与 Docker 共用同一份。
+
+`vercel.json` 已配好：非 `/api/*` 请求路由到 Hono app，Cron 每天 04:00 续期 cookie。
+部署时 `vercel-build` 脚本用 esbuild 把 TS 源（含 `.ts` 扩展名 import 与 voices.json）打包成 `dist-vercel/`，
+`api/*.mjs` 薄壳引用产物作为 Function 入口（Vercel 默认 runtime 不认 .ts 源）。
 
 > ⚠️ Vercel serverless 有两个限制：函数执行时长上限（Hobby 10s / Pro 60s），
 > 长文本合成可能超时；以及并发靠 Redis 分布式限流，比单机信号量粗。

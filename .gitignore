@@ -12,6 +12,7 @@ node_modules/
 
 # Vercel
 .vercel/
+dist-vercel/
 
 # 生成的音频 / 日志
 *.mp3

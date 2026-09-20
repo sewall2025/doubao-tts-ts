@@ -1,12 +1,10 @@
 /**
- * Vercel Cron 端点：定时续期 cookie（serverless 无常驻进程，用 cron 替代 setInterval）。
- * vercel.json 里配 crons 指向此路径。
+ * Vercel Cron 逻辑：定时续期 cookie（serverless 无常驻进程，用 cron 替代 setInterval）。
+ * 被 esbuild 打包成 dist-vercel/cron/renew.js，再由 api/cron/renew.mjs 薄壳引用。
  * 可选用 CRON_SECRET 校验，防止被外部随意触发。
  */
-import { renewCookie, cookieExpiryDays } from "../../src/lib/cookie.ts";
-import { KEEPALIVE_THRESHOLD_D } from "../../src/lib/config.ts";
-
-export const config = { runtime: "nodejs" };
+import { renewCookie, cookieExpiryDays } from "../lib/cookie.ts";
+import { KEEPALIVE_THRESHOLD_D } from "../lib/config.ts";
 
 export default async function handler(req: Request): Promise<Response> {
   // Vercel Cron 会带 Authorization: Bearer $CRON_SECRET（若配置了）
