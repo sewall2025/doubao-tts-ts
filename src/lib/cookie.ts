@@ -119,7 +119,7 @@ export interface RenewResult {
   msg: string;
 }
 
-/** 续期登录态，成功则把新 cookie 写回存储。不抛异常。 */
+/** 续期登录态，成功则把新 cookie 写回存储。网络/登录态失败以 ok=false 返回；存储读写失败仍会抛异常。 */
 export async function renewCookie(): Promise<RenewResult> {
   const header = await loadCookie();
   if (!header) return { ok: false, msg: "未找到 cookie" };

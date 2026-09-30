@@ -41,6 +41,17 @@ docker run -d -p 8000:8000 \
 
 cookie 落盘到挂载的 `/data`，保温续期会回写，重启不丢。
 
+> 用 `docker run --env-file .env` 时，`.env` 里的 `DOUBAO_TTS_DATA_DIR` 会覆盖镜像默认值，必须设成 `/data`；
+> `docker compose` 下由 compose 文件的 `environment` 固定为 `/data`，不受影响。
+
+**保温 / 手动续期**：Docker 有内置定时器（每 `DOUBAO_TTS_KEEPALIVE_INTERVAL_H` 小时检查），不需要 Cron。
+`GET /api/cron/renew` 同样可用于手动触发，鉴权规则见[续期端点鉴权](#续期端点鉴权)（没设 `CRON_SECRET` 就用 API Key）：
+
+```bash
+curl -H "Authorization: Bearer sk-xxx" http://localhost:8000/api/cron/renew
+# 设了 CRON_SECRET 则改带: -H "Authorization: Bearer <CRON_SECRET>"
+```
+
 ## 部署到 Vercel
 
 ### 完整步骤
@@ -89,16 +100,22 @@ cookie 约 30 天过期。Docker 用常驻定时器，Vercel 没有常驻进程�
 每天 UTC 4:00（北京时间 12:00）打一次；剩余天数低于 `DOUBAO_TTS_KEEPALIVE_THRESHOLD_D`（默认 25）才真去续，否则空跑。
 
 **验证已生效**：面板 → 项目 → **Settings → Cron Jobs**，应能看到 `/api/cron/renew` 和下次执行时间。
-也可手动试一下（未设 `CRON_SECRET` 时直接访问）：
 
-```bash
-curl https://你的域名/api/cron/renew
-# {"renewed":false,"reason":"剩余 28.8 天，无需续期"}  ← 这样就是通的
-```
+#### 续期端点鉴权
 
-**设 `CRON_SECRET`（推荐）**
+`/api/cron/renew` 的鉴权规则（Vercel / Docker 通用）：
 
-不设的话 `/api/cron/renew` 是公开的，任何人能反复触发续期。设法：
+1. 设了 `CRON_SECRET` → 只认 `Authorization: Bearer <CRON_SECRET>`（API Key 不再放行）。
+2. 没设 `CRON_SECRET` → 退回 `DOUBAO_TTS_API_KEY` 鉴权，和其他 API 端点一致。
+3. 两者都没设 → 不鉴权（仅回环场景），启动后首次访问会打一条公开端点警告。
+
+续期失败（未找到 cookie、登录态失效、网络错误）返回 **HTTP 503** `{"renewed":false,"msg":"..."}`，
+成功返回 200；结果都会打日志（`[cron]` 前缀），Vercel Cron 面板能看到失败。
+
+**Vercel 上必须设 `CRON_SECRET`**：Vercel Cron 只会带 `Bearer <CRON_SECRET>`，不会带 API Key。
+不设的话端点走 API Key 鉴权，Cron 每次都会被 401，保温实际不生效。
+
+**设 `CRON_SECRET`**
 
 1. **生成一个随机字符串**（任意长度都行，建议 32 位以上）：
 
@@ -116,10 +133,12 @@ curl https://你的域名/api/cron/renew
 
 设完就行了，**客户端和 Cron 都不用再配**：Vercel Cron 调自己的函数时会自动带上 `Authorization: Bearer <CRON_SECRET>`。
 
-**验证**：再试上面那条 curl，应该返 `{"error":"unauthorized"}`（401）——**这说明保护生效了**。想手动触发得自己带头：
+**验证**：不带头访问应返 `{"error":"unauthorized"}`（401）——**这说明保护生效了**。手动触发得自己带头：
 
 ```bash
-curl -H "Authorization: Bearer 你的CRON_SECRET" https://你的域名/api/cron/renew
+curl -H "Authorization: Bearer <CRON_SECRET>" https://你的域名/api/cron/renew
+# {"renewed":false,"reason":"剩余 28.8 天，无需续期"}  ← 200，通了
+# 返回 503 + {"renewed":false,"msg":"..."} 表示续期失败，按 msg 排查（如需重新写 cookie）
 ```
 
 > ⚠️ Vercel **Hobby 套餐的 Cron 每天只能跑 1 次且执行时间不保证精准**（可能漂几小时），对保温这种“剩 25 天才续”的场景完全够用。
@@ -152,7 +171,7 @@ curl -H "Authorization: Bearer 你的CRON_SECRET" https://你的域名/api/cron/
 | `DOUBAO_TTS_KEEPALIVE_INTERVAL_H` | `12` | 保温检查间隔（小时，仅 Docker） |
 | `DOUBAO_TTS_KEEPALIVE_THRESHOLD_D` | `25` | 剩余天数低于此值才续期 |
 | `KV_REST_API_URL` / `_TOKEN` | 无 | redis 后端（Vercel KV / Upstash），也认 `UPSTASH_REDIS_REST_*` |
-| `CRON_SECRET` | 无 | （可选）保护 Vercel Cron 续期端点 |
+| `CRON_SECRET` | 无 | 续期端点 `/api/cron/renew` 专用密钥；未设则退回 API Key 鉴权。Vercel 必填（Cron 靠它鉴权） |
 
 ## 端点
 

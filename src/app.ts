@@ -2,7 +2,7 @@
  * Hono 应用：OpenAI 兼容 TTS 服务。
  * 一套路由，src/server.ts（Docker）与 Vercel（原生 Hono 检测，直接 serve 本文件）共用。
  */
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { Hono } from "hono";
 import { handle } from "hono/vercel";
 import { API_KEY, MAX_INPUT_CHARS, KEEPALIVE_ENABLED, KEEPALIVE_THRESHOLD_D } from "./lib/config.js";
@@ -357,19 +357,34 @@ app.post("/v1/audio/speech", async (c) => {
 });
 
 // Vercel Cron 端点（serverless 无常驻进程，用 cron 替代 setInterval 定时续期）。
-// vercel.json 的 crons 每天打这个路径；可选 CRON_SECRET 校验防外部误触发。
+// 鉴权：设了 CRON_SECRET → 只认 `Bearer <CRON_SECRET>`（Vercel Cron 自动带）；
+// 没设 → 退回 API_KEY 鉴权（checkAuth，与其他 API 端点一致）。
+// 续期失败返回 503，让 Vercel Cron 面板 / 监控能看到失败。
+let cronPublicWarned = false;
+function checkCronSecret(authHeader: string | undefined, secret: string): boolean {
+  const got = Buffer.from(authHeader ?? "");
+  const want = Buffer.from(`Bearer ${secret}`);
+  return got.length === want.length && timingSafeEqual(got, want);
+}
 app.get("/api/cron/renew", async (c) => {
   const secret = process.env.CRON_SECRET;
+  const authHeader = c.req.header("Authorization");
   if (secret) {
-    const auth = c.req.header("Authorization") ?? "";
-    if (auth !== `Bearer ${secret}`) return c.json({ error: "unauthorized" }, 401);
+    if (!checkCronSecret(authHeader, secret)) return c.json({ error: "unauthorized" }, 401);
+  } else {
+    if (!checkAuth(authHeader)) return c.json({ error: "unauthorized" }, 401);
+    if (!API_KEY && !cronPublicWarned) {
+      cronPublicWarned = true;
+      console.warn("⚠️  /api/cron/renew 未设 CRON_SECRET 且未设 DOUBAO_TTS_API_KEY，端点处于公开状态");
+    }
   }
   const days = await cookieExpiryDays();
   if (days !== null && days >= KEEPALIVE_THRESHOLD_D) {
     return c.json({ renewed: false, reason: `剩余 ${days.toFixed(1)} 天，无需续期` });
   }
   const r = await renewCookie();
-  return c.json({ renewed: r.ok, msg: r.msg });
+  console.log(r.ok ? `[cron] ✓ cookie 续期: ${r.msg}` : `[cron] ⚠️  cookie 续期失败: ${r.msg}`);
+  return c.json({ renewed: r.ok, msg: r.msg }, r.ok ? 200 : 503);
 });
 
 // Vercel Function 入口：导出命名 HTTP 方法（Web fetch 风格）。

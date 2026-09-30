@@ -60,7 +60,12 @@ function startKeepalive(): void {
   ).unref(); // 不阻止进程退出
 }
 
-await startupCheck();
+// 自检失败（如存储写入抛错）只记日志，不能阻止服务启动
+try {
+  await startupCheck();
+} catch (e) {
+  console.error("⚠️  启动自检异常:", (e as Error).message);
+}
 startKeepalive();
 
 console.log("🎤 豆包 TTS OpenAI 兼容服务");
