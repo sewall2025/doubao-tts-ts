@@ -99,6 +99,7 @@ class RedisStorage implements Storage {
   private async cmd(...args: (string | number)[]): Promise<unknown> {
     const res = await fetch(`${this.url}/${args.map(encodeURIComponent).join("/")}`, {
       headers: { Authorization: `Bearer ${this.token}` },
+      signal: AbortSignal.timeout(5_000),
     });
     if (!res.ok) throw new Error(`Redis ${res.status}: ${await res.text()}`);
     const data = (await res.json()) as { result?: unknown };
@@ -116,6 +117,7 @@ class RedisStorage implements Storage {
       method: "POST",
       headers: { Authorization: `Bearer ${this.token}` },
       body: value,
+      signal: AbortSignal.timeout(5_000),
     });
     if (!res.ok) throw new Error(`Redis SET ${res.status}: ${await res.text()}`);
   }
@@ -163,7 +165,7 @@ export function getStorage(): Storage {
     }
     _storage = new RedisStorage(kvUrl, kvToken);
   } else {
-    const dir = process.env.DOUBAO_TTS_DATA_DIR ?? process.cwd();
+    const dir = process.env.DOUBAO_TTS_DATA_DIR ?? `${process.cwd()}/data`;
     _storage = new FileStorage(dir);
   }
   return _storage;

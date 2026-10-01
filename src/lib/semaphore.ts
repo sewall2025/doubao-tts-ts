@@ -27,15 +27,18 @@ export async function acquire(): Promise<() => void> {
     active += 1;
   } else {
     await new Promise<void>((resolve) => waiters.push(resolve));
-    active += 1;
+    // 槽位由 release 直接移交过来（active 未减），这里不再 += 1
   }
   let released = false;
   return () => {
     if (released) return; // 幂等，避免重复释放
     released = true;
-    active -= 1;
+    // 直接把槽位移交给队首 waiter，而不是先 active -= 1 再唤醒：
+    // 唤醒（resolve）到 waiter 真正恢复之间隔着微任务，期间新来的 acquire 看到 active < 上限
+    // 会直接插队拿槽，waiter 恢复后再 += 1 → 实际并发超过上限。
     const next = waiters.shift();
     if (next) next();
+    else active -= 1;
   };
 }
 

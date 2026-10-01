@@ -47,7 +47,13 @@ function parseCookie(header: string): Map<string, string> {
 function expiryFromSidGuard(header: string): number | null {
   const sg = parseCookie(header).get("sid_guard");
   if (!sg) return null;
-  const parts = decodeURIComponent(sg).split("|");
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(sg);
+  } catch {
+    return null; // 非法百分号编码（URIError）→ 无法判断
+  }
+  const parts = decoded.split("|");
   if (parts.length < 3) return null;
   const issued = Number(parts[1]);
   const ttl = Number(parts[2]);
@@ -95,6 +101,7 @@ async function beat(cookieHeader: string): Promise<BeatResult> {
         Referer: "https://www.doubao.com/chat/",
         "User-Agent": UA,
       },
+      signal: AbortSignal.timeout(10_000),
     });
   } catch (e) {
     return { ok: false, msg: `请求失败: ${(e as Error).message}`, setCookies: [] };

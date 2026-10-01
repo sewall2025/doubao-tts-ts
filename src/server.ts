@@ -33,7 +33,7 @@ async function startupCheck(): Promise<void> {
     const days = await cookieExpiryDays(cookie);
     if (days !== null) {
       console.log(`✓ cookie 剩余 ${days.toFixed(1)} 天`);
-      if (days < KEEPALIVE_THRESHOLD_D) {
+      if (KEEPALIVE_ENABLED && days < KEEPALIVE_THRESHOLD_D) {
         const r = await renewCookie();
         console.log(r.ok ? `✓ cookie 保温: ${r.msg}` : `⚠️  cookie 续期失败: ${r.msg}`);
       }

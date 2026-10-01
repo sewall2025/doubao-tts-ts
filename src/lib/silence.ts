@@ -10,7 +10,7 @@
  * 本模块对齐该行为：失败段返回一小段合法静音音频(200)，客户端无声播过、顺畅推进。
  * 调用方（src/app.ts）会加 X-Doubao-Fallback: silence 响应头并打 [FALLBACK silence] 日志。
  *
- * mp3 用预生成的合法静音帧(ffmpeg: anullsrc 24kHz mono 32k, ~0.3s)。
+ * mp3 用预生成的合法静音帧(ffmpeg: anullsrc 24kHz mono 32k, ~50ms)。
  * wav/pcm 程序生成静音。opus 罕见，退回 mp3 静音字节（客户端只用 mp3）。
  */
 import type { AudioFormat } from "./tts.js";

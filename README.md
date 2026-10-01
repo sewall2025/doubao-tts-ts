@@ -7,7 +7,7 @@
 
 ## 特性
 
-- OpenAI 兼容 `POST /v1/audio/speech`（流式返回，mp3/opus/wav/pcm）
+- OpenAI 兼容 `POST /v1/audio/speech`（缓冲后整段返回，mp3/opus/wav/pcm）
 - 304 个音色，白名单校验（简称 / speaker_id / 中文名）
 - 音色预览页面 `/ui`（女声/男声分组，填 API Key 试听）
 - cookie 自动保温（心跳端点滚动续期，Docker 用定时器 / Vercel 用 Cron）
@@ -158,16 +158,17 @@ curl -H "Authorization: Bearer <CRON_SECRET>" https://你的域名/api/cron/rene
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
-| `DOUBAO_TTS_API_KEY` | 无 | Bearer 鉴权；未设则仅回环可达 |
+| `DOUBAO_TTS_API_KEY` | 无 | Bearer 鉴权；未设则仅回环可达。Vercel 上必须设置，否则所有鉴权端点返回 401 |
 | `STORAGE_BACKEND` | 自动 | 缺省自动检测：有 KV 变量→`redis`，否则`file`；可显式覆盖 |
 | `DOUBAO_TTS_DATA_DIR` | `./data` | file 后端 cookie 目录（Docker 内为 `/data`） |
-| `DOUBAO_TTS_HOST` | `0.0.0.0`/`127.0.0.1` | 监听地址；未设 key 时强制回环 |
+| `DOUBAO_TTS_HOST` | 见说明 | 监听地址；未设时：有 key 就是 `0.0.0.0`，否则 `127.0.0.1`；未设 key 又显式指定非回环地址时拒绝启动 |
 | `DOUBAO_TTS_PORT` | `8000` | 监听端口（仅 Docker/本地） |
 | `DOUBAO_TTS_MAX_INPUT` | `4096` | 单次文本长度上限 |
 | `DOUBAO_TTS_RATE_MAX` | `8` | 限流窗口内最大请求数 |
 | `DOUBAO_TTS_RATE_WINDOW` | `1` | 限流窗口秒数 |
 | `DOUBAO_TTS_CONCURRENCY` | `8` | 同时连豆包的最大并发数（信号量） |
-| `DOUBAO_TTS_KEEPALIVE` | `1` | cookie 保温开关，`0/false/off` 关闭 |
+| `DOUBAO_TTS_UNIQUE_DEVICE` | `1` | `0/false/off` 时用单设备，否则设备池大小等于 `DOUBAO_TTS_CONCURRENCY` |
+| `DOUBAO_TTS_KEEPALIVE` | `1` | cookie 保温开关，`0/false/off` 关闭；同时控制启动续期和 `/api/cron/renew` |
 | `DOUBAO_TTS_KEEPALIVE_INTERVAL_H` | `12` | 保温检查间隔（小时，仅 Docker） |
 | `DOUBAO_TTS_KEEPALIVE_THRESHOLD_D` | `25` | 剩余天数低于此值才续期 |
 | `KV_REST_API_URL` / `_TOKEN` | 无 | redis 后端（Vercel KV / Upstash），也认 `UPSTASH_REDIS_REST_*` |
@@ -177,7 +178,7 @@ curl -H "Authorization: Bearer <CRON_SECRET>" https://你的域名/api/cron/rene
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| POST | `/v1/audio/speech` | 语音合成，OpenAI 兼容，流式 |
+| POST | `/v1/audio/speech` | 语音合成，OpenAI 兼容，缓冲后整段返回 |
 | GET | `/v1/audio/voices` | 音色列表（鉴权，支持 `?q= &tab= &limit=`） |
 | GET | `/v1/models` | 模型列表（鉴权） |
 | GET | `/ui` | 音色预览页面（免鉴权） |

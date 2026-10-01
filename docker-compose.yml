@@ -33,7 +33,7 @@ services:
     volumes:
       # cookie 持久化 + 保温续期回写；挂目录而非单文件
       - ./data:/data
-      # 音色表挂出来，重新抓取后即时生效（可选）
+      # 音色表挂出来，重新抓取后需重启容器生效（可选）
       - ./voices.json:/app/voices.json
 
     logging:
